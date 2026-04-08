@@ -4,7 +4,7 @@
  *
  * Self-contained MCP server with full access control: pairing, allowlists,
  * guild-channel support with mention-triggering. State lives in
- * ~/.claude/channels/discord/access.json — managed by the /discord:access skill.
+ * $DISCORD_STATE_DIR/access.json — managed by the /discord:access skill.
  *
  * Discord's search API isn't exposed to bots — fetch_messages is the only
  * lookback, and the instructions tell the model this.
@@ -39,7 +39,7 @@ const ACCESS_FILE = join(STATE_DIR, 'access.json')
 const APPROVED_DIR = join(STATE_DIR, 'approved')
 const ENV_FILE = join(STATE_DIR, '.env')
 
-// Load ~/.claude/channels/discord/.env into process.env. Real env wins.
+// Load $DISCORD_STATE_DIR/.env into process.env. Real env wins.
 // Plugin-spawned servers don't get an env block — this is where the token lives.
 try {
   // Token is a credential — lock to owner. No-op on Windows (would need ACLs).
