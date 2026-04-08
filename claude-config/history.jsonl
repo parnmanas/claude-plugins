@@ -1,0 +1,12 @@
+{"display":"`/discord:configure` 를 실행하면 설정폴더를 무조건 ~/.claude/ 밑을 찾아. 이부분 수정이 다 안됐나봐","pastedContents":{},"timestamp":1775652802202,"project":"/mnt/data/repositories/claude-plugins","sessionId":"2b6a337d-8bce-4533-8071-d7b380a74442"}
+{"display":"commit/push 해줘. 그런 다음 /plugin instlal 다시 하면 되지?","pastedContents":{},"timestamp":1775652952630,"project":"/mnt/data/repositories/claude-plugins","sessionId":"2b6a337d-8bce-4533-8071-d7b380a74442"}
+{"display":"/plugin","pastedContents":{},"timestamp":1775653023496,"project":"/mnt/data/repositories/claude-plugins","sessionId":"2b6a337d-8bce-4533-8071-d7b380a74442"}
+{"display":"github 으로 marketplace 추가하는 방법 알려줘","pastedContents":{},"timestamp":1775653052985,"project":"/mnt/data/repositories/claude-plugins","sessionId":"2b6a337d-8bce-4533-8071-d7b380a74442"}
+{"display":"/plugin marketplace add ParnManas/claude-plugins","pastedContents":{},"timestamp":1775653120213,"project":"/mnt/data/repositories/claude-plugins","sessionId":"2b6a337d-8bce-4533-8071-d7b380a74442"}
+{"display":"/plugin","pastedContents":{},"timestamp":1775653132549,"project":"/mnt/data/repositories/claude-plugins","sessionId":"2b6a337d-8bce-4533-8071-d7b380a74442"}
+{"display":"/reload-plugins","pastedContents":{},"timestamp":1775653147270,"project":"/mnt/data/repositories/claude-plugins","sessionId":"2b6a337d-8bce-4533-8071-d7b380a74442"}
+{"display":"exit","pastedContents":{},"timestamp":1775653162117,"project":"/mnt/data/repositories/claude-plugins","sessionId":"2b6a337d-8bce-4533-8071-d7b380a74442"}
+{"display":"/configure","pastedContents":{},"timestamp":1775653168370,"project":"/mnt/data/repositories/claude-plugins","sessionId":"1985f31c-3b1c-4084-a05d-21f399b38be1"}
+{"display":"exit","pastedContents":{},"timestamp":1775653187012,"project":"/mnt/data/repositories/claude-plugins","sessionId":"1985f31c-3b1c-4084-a05d-21f399b38be1"}
+{"display":"commit/push 해줘","pastedContents":{},"timestamp":1775653208004,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"credentials.json 말고는 다 commit해 (.gitignore)","pastedContents":{},"timestamp":1775653273140,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
