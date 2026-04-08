@@ -1,0 +1,11 @@
+{
+  "name": "ai-workflow-board",
+  "description": "AI Workflow Board - ticket management, boards, agents, and workspace tools via MCP.",
+  "version": "0.0.1",
+  "keywords": [
+    "workflow",
+    "board",
+    "tickets",
+    "mcp"
+  ]
+}

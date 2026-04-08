@@ -18,6 +18,12 @@
       "description": "Claude process introspection and lifecycle control - inspect, kill, and clear (fresh restart).",
       "category": "development",
       "source": "./claude-self"
+    },
+    {
+      "name": "ai-workflow-board",
+      "description": "AI Workflow Board - ticket management, boards, agents, and workspace tools.",
+      "category": "productivity",
+      "source": "./ai-workflow-board"
     }
   ]
 }
