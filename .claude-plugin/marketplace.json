@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "parnmanas",
+  "description": "Parn's custom Claude Code plugins",
+  "owner": {
+    "name": "Parn",
+    "email": "parn@parnmanas.com"
+  },
+  "plugins": [
+    {
+      "name": "discord",
+      "description": "Discord channel for Claude Code - messaging bridge with built-in access control.",
+      "category": "messaging",
+      "source": "./discord"
+    },
+    {
+      "name": "claude-self",
+      "description": "Claude process introspection and lifecycle control - inspect, kill, and clear (fresh restart).",
+      "category": "development",
+      "source": "./claude-self"
+    }
+  ]
+}
