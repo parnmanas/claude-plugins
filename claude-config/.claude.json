@@ -20,7 +20,9 @@
     "image-paste": 3,
     "web-app": 3,
     "mobile-app": 3,
-    "guest-passes": 3
+    "guest-passes": 3,
+    "custom-agents": 6,
+    "agent-flag": 6
   },
   "cachedGrowthBookFeatures": {
     "tengu_garnet_loom": false,
