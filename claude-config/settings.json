@@ -1,11 +1,20 @@
 {
-  "skipDangerousModePermissionPrompt": true,
   "extraKnownMarketplaces": {
     "parnmanas": {
       "source": {
         "source": "github",
-        "repo": "ParnManas/claude-plugins"
+        "repo": "parnmanas/claude-plugins"
+      }
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
       }
     }
+  },
+  "skipDangerousModePermissionPrompt": true,
+  "enabledPlugins": {
+    "discord@parnmanas": true
   }
 }

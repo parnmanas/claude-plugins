@@ -1,0 +1,11 @@
+{
+  "skipDangerousModePermissionPrompt": true,
+  "extraKnownMarketplaces": {
+    "parnmanas": {
+      "source": {
+        "source": "github",
+        "repo": "ParnManas/claude-plugins"
+      }
+    }
+  }
+}

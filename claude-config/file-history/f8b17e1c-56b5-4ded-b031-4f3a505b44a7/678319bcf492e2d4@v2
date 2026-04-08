@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "plugins": {
+    "discord@parnmanas": [
+      {
+        "scope": "local",
+        "projectPath": "/mnt/data/repositories/claude-plugins",
+        "installPath": "claude-config/plugins/cache/parnmanas/discord/0.0.4",
+        "version": "0.0.4",
+        "installedAt": "2026-04-08T12:58:58.124Z",
+        "lastUpdated": "2026-04-08T12:58:58.124Z",
+        "gitCommitSha": "c2c740e9f1415a525610cebeb369ce2da5edfcb2"
+      },
+      {
+        "scope": "user",
+        "installPath": "claude-config/plugins/cache/parnmanas/discord/0.0.4",
+        "version": "0.0.4",
+        "installedAt": "2026-04-08T14:59:49.856Z",
+        "lastUpdated": "2026-04-08T14:59:49.856Z",
+        "gitCommitSha": "69e042bfcf58689cf9de280ed4055792dadf7e22"
+      }
+    ],
+    "claude-self@parnmanas": [
+      {
+        "scope": "user",
+        "installPath": "claude-config/plugins/cache/parnmanas/claude-self/0.0.1",
+        "version": "0.0.1",
+        "installedAt": "2026-04-09T00:00:00.000Z",
+        "lastUpdated": "2026-04-09T00:00:00.000Z",
+        "gitCommitSha": "69e042bfcf58689cf9de280ed4055792dadf7e22"
+      }
+    ],
+    "ai-workflow-board@parnmanas": [
+      {
+        "scope": "user",
+        "installPath": "claude-config/plugins/cache/parnmanas/ai-workflow-board/0.0.1",
+        "version": "0.0.1",
+        "installedAt": "2026-04-09T00:00:00.000Z",
+        "lastUpdated": "2026-04-09T00:00:00.000Z",
+        "gitCommitSha": "69e042bfcf58689cf9de280ed4055792dadf7e22"
+      }
+    ]
+  }
+}

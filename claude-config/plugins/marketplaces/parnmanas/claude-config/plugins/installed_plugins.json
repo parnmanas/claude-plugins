@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "plugins": {
+    "discord@parnmanas": [
+      {
+        "scope": "local",
+        "installPath": "claude-config/plugins/cache/parnmanas/discord/0.0.4",
+        "version": "0.0.4",
+        "installedAt": "2026-04-08T12:58:58.124Z",
+        "lastUpdated": "2026-04-08T12:58:58.124Z",
+        "gitCommitSha": "c2c740e9f1415a525610cebeb369ce2da5edfcb2",
+        "projectPath": "/mnt/data/repositories/claude-plugins"
+      }
+    ]
+  }
+}

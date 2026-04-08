@@ -1,7 +1,7 @@
 {
-  "numStartups": 3,
+  "numStartups": 6,
   "tipsHistory": {
-    "new-user-warmup": 1,
+    "new-user-warmup": 4,
     "plan-mode-for-complex-tasks": 1,
     "terminal-setup": 1,
     "memory-command": 1,
@@ -457,46 +457,61 @@
       "projectOnboardingSeenCount": 1,
       "hasClaudeMdExternalIncludesApproved": false,
       "hasClaudeMdExternalIncludesWarningShown": false,
-      "lastCost": 0.09460675,
-      "lastAPIDuration": 17223,
-      "lastAPIDurationWithoutRetries": 17188,
-      "lastToolDuration": 172,
-      "lastDuration": 22538,
-      "lastLinesAdded": 0,
-      "lastLinesRemoved": 0,
-      "lastTotalInputTokens": 5,
-      "lastTotalOutputTokens": 628,
-      "lastTotalCacheCreationInputTokens": 7425,
-      "lastTotalCacheReadInputTokens": 64951,
+      "lastCost": 6.292025950000003,
+      "lastAPIDuration": 1267142,
+      "lastAPIDurationWithoutRetries": 1265848,
+      "lastToolDuration": 289937,
+      "lastDuration": 2660649,
+      "lastLinesAdded": 23,
+      "lastLinesRemoved": 3,
+      "lastTotalInputTokens": 578,
+      "lastTotalOutputTokens": 58141,
+      "lastTotalCacheCreationInputTokens": 205697,
+      "lastTotalCacheReadInputTokens": 11813921,
       "lastTotalWebSearchRequests": 0,
-      "lastFpsAverage": 16.32,
-      "lastFpsLow1Pct": 228.47,
+      "lastFpsAverage": 11.91,
+      "lastFpsLow1Pct": 227.55,
       "lastModelUsage": {
-        "claude-opus-4-6[1m]": {
-          "inputTokens": 5,
-          "outputTokens": 628,
-          "cacheReadInputTokens": 64951,
-          "cacheCreationInputTokens": 7425,
+        "claude-haiku-4-5-20251001": {
+          "inputTokens": 457,
+          "outputTokens": 9895,
+          "cacheReadInputTokens": 4291932,
+          "cacheCreationInputTokens": 88091,
           "webSearchRequests": 0,
-          "costUSD": 0.09460675
+          "costUSD": 0.5892389499999998
+        },
+        "claude-opus-4-6[1m]": {
+          "inputTokens": 121,
+          "outputTokens": 48246,
+          "cacheReadInputTokens": 7521989,
+          "cacheCreationInputTokens": 117606,
+          "webSearchRequests": 0,
+          "costUSD": 5.702787000000002
         }
       },
-      "lastSessionId": "1985f31c-3b1c-4084-a05d-21f399b38be1",
+      "lastSessionId": "f8b17e1c-56b5-4ded-b031-4f3a505b44a7",
       "lastSessionMetrics": {
-        "frame_duration_ms_count": 351,
-        "frame_duration_ms_min": 0.06937200000038501,
-        "frame_duration_ms_max": 22.294358000000102,
-        "frame_duration_ms_avg": 1.433972433048358,
-        "frame_duration_ms_p50": 1.621755000000121,
-        "frame_duration_ms_p95": 2.5309739999993326,
-        "frame_duration_ms_p99": 4.255686999998943,
-        "pre_tool_hook_duration_ms_count": 3,
+        "frame_duration_ms_count": 31665,
+        "frame_duration_ms_min": 0.05248600000049919,
+        "frame_duration_ms_max": 44.09081899980083,
+        "frame_duration_ms_avg": 2.0270111239219664,
+        "frame_duration_ms_p50": 1.9974214999820106,
+        "frame_duration_ms_p95": 3.4381117000011714,
+        "frame_duration_ms_p99": 4.01807810996659,
+        "pre_tool_hook_duration_ms_count": 185,
         "pre_tool_hook_duration_ms_min": 0,
         "pre_tool_hook_duration_ms_max": 1,
-        "pre_tool_hook_duration_ms_avg": 0.3333333333333333,
+        "pre_tool_hook_duration_ms_avg": 0.0972972972972973,
         "pre_tool_hook_duration_ms_p50": 0,
-        "pre_tool_hook_duration_ms_p95": 0.8999999999999999,
-        "pre_tool_hook_duration_ms_p99": 0.98
+        "pre_tool_hook_duration_ms_p95": 1,
+        "pre_tool_hook_duration_ms_p99": 1,
+        "hook_duration_ms_count": 59,
+        "hook_duration_ms_min": 0,
+        "hook_duration_ms_max": 1,
+        "hook_duration_ms_avg": 0.2033898305084746,
+        "hook_duration_ms_p50": 0,
+        "hook_duration_ms_p95": 1,
+        "hook_duration_ms_p99": 1
       }
     }
   },
@@ -526,7 +541,7 @@
         "amount_minor_units": 20000,
         "currency": "USD"
       },
-      "timestamp": 1775652719222
+      "timestamp": 1775660195399
     }
   },
   "officialMarketplaceAutoInstallAttempted": true,

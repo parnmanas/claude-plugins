@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "plugins": {
+    "discord@parnmanas": [
+      {
+        "scope": "local",
+        "projectPath": "/mnt/data/repositories/claude-plugins",
+        "installPath": "claude-config/plugins/cache/parnmanas/discord/0.0.4",
+        "version": "0.0.4",
+        "installedAt": "2026-04-08T12:58:58.124Z",
+        "lastUpdated": "2026-04-08T12:58:58.124Z",
+        "gitCommitSha": "c2c740e9f1415a525610cebeb369ce2da5edfcb2"
+      },
+      {
+        "scope": "user",
+        "installPath": "claude-config/plugins/cache/parnmanas/discord/0.0.4",
+        "version": "0.0.4",
+        "installedAt": "2026-04-08T14:59:49.856Z",
+        "lastUpdated": "2026-04-08T14:59:49.856Z",
+        "gitCommitSha": "69e042bfcf58689cf9de280ed4055792dadf7e22"
+      }
+    ]
+  }
+}
