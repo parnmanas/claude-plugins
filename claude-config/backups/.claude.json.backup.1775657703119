@@ -10,7 +10,14 @@
     "prompt-queue": 1,
     "enter-to-steer-in-relatime": 1,
     "todo-list": 2,
-    "ide-upsell-external-terminal": 2
+    "ide-upsell-external-terminal": 2,
+    "install-github-app": 3,
+    "install-slack-app": 3,
+    "drag-and-drop-images": 3,
+    "double-esc-code-restore": 3,
+    "continue": 3,
+    "shift-tab": 3,
+    "image-paste": 3
   },
   "cachedGrowthBookFeatures": {
     "tengu_garnet_loom": false,

@@ -1,5 +1,21 @@
 {
-  "numStartups": 1,
+  "numStartups": 3,
+  "tipsHistory": {
+    "new-user-warmup": 1,
+    "plan-mode-for-complex-tasks": 1,
+    "terminal-setup": 1,
+    "memory-command": 1,
+    "theme-command": 1,
+    "status-line": 1,
+    "prompt-queue": 1,
+    "enter-to-steer-in-relatime": 1,
+    "todo-list": 2,
+    "ide-upsell-external-terminal": 2,
+    "install-github-app": 3,
+    "install-slack-app": 3,
+    "drag-and-drop-images": 3,
+    "double-esc-code-restore": 3
+  },
   "cachedGrowthBookFeatures": {
     "tengu_garnet_loom": false,
     "tengu_cobalt_lantern": true,
@@ -434,7 +450,48 @@
       "hasTrustDialogAccepted": true,
       "projectOnboardingSeenCount": 1,
       "hasClaudeMdExternalIncludesApproved": false,
-      "hasClaudeMdExternalIncludesWarningShown": false
+      "hasClaudeMdExternalIncludesWarningShown": false,
+      "lastCost": 0.09460675,
+      "lastAPIDuration": 17223,
+      "lastAPIDurationWithoutRetries": 17188,
+      "lastToolDuration": 172,
+      "lastDuration": 22538,
+      "lastLinesAdded": 0,
+      "lastLinesRemoved": 0,
+      "lastTotalInputTokens": 5,
+      "lastTotalOutputTokens": 628,
+      "lastTotalCacheCreationInputTokens": 7425,
+      "lastTotalCacheReadInputTokens": 64951,
+      "lastTotalWebSearchRequests": 0,
+      "lastFpsAverage": 16.32,
+      "lastFpsLow1Pct": 228.47,
+      "lastModelUsage": {
+        "claude-opus-4-6[1m]": {
+          "inputTokens": 5,
+          "outputTokens": 628,
+          "cacheReadInputTokens": 64951,
+          "cacheCreationInputTokens": 7425,
+          "webSearchRequests": 0,
+          "costUSD": 0.09460675
+        }
+      },
+      "lastSessionId": "1985f31c-3b1c-4084-a05d-21f399b38be1",
+      "lastSessionMetrics": {
+        "frame_duration_ms_count": 351,
+        "frame_duration_ms_min": 0.06937200000038501,
+        "frame_duration_ms_max": 22.294358000000102,
+        "frame_duration_ms_avg": 1.433972433048358,
+        "frame_duration_ms_p50": 1.621755000000121,
+        "frame_duration_ms_p95": 2.5309739999993326,
+        "frame_duration_ms_p99": 4.255686999998943,
+        "pre_tool_hook_duration_ms_count": 3,
+        "pre_tool_hook_duration_ms_min": 0,
+        "pre_tool_hook_duration_ms_max": 1,
+        "pre_tool_hook_duration_ms_avg": 0.3333333333333333,
+        "pre_tool_hook_duration_ms_p50": 0,
+        "pre_tool_hook_duration_ms_p95": 0.8999999999999999,
+        "pre_tool_hook_duration_ms_p99": 0.98
+      }
     }
   },
   "githubRepoPaths": {
@@ -449,7 +506,7 @@
     }
   },
   "effortCalloutV2Dismissed": true,
-  "voiceNoticeSeenCount": 1,
+  "voiceNoticeSeenCount": 3,
   "lastReleaseNotesSeen": "2.1.96",
   "penguinModeOrgEnabled": true,
   "clientDataCache": {},
@@ -489,5 +546,14 @@
     "claude.ai Gmail",
     "claude.ai Google Calendar",
     "claude.ai Atlassian"
-  ]
+  ],
+  "passesUpsellSeenCount": 0,
+  "hasVisitedPasses": false,
+  "passesLastSeenRemaining": 3,
+  "skillUsage": {
+    "configure": {
+      "usageCount": 1,
+      "lastUsedAt": 1775653168377
+    }
+  }
 }

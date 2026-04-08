@@ -11,8 +11,8 @@ allowed-tools:
 
 # /discord:configure — Discord Channel Setup
 
-Writes the bot token to `$DISCORD_STATE_DIR/.env` and orients the
-user on access policy. The server reads both files at boot.
+Writes the bot token to `<state>/.env` and orients the user on access
+policy. The server reads both files at boot.
 
 Arguments passed: `$ARGUMENTS`
 
@@ -20,12 +20,11 @@ Arguments passed: `$ARGUMENTS`
 
 ## Resolve state directory
 
-The state directory is `$DISCORD_STATE_DIR`. This env var is set by the
-plugin's `.mcp.json` to `${CLAUDE_CONFIG_DIR}/channels/discord`. If for some
-reason `DISCORD_STATE_DIR` is empty, fall back to `~/.claude/channels/discord`.
+The state directory is `$CLAUDE_CONFIG_DIR/channels/discord` (defaults to
+`~/.claude/channels/discord` when `CLAUDE_CONFIG_DIR` is not set).
 
 All file paths below are relative to this resolved state directory. For
-example, "`.env`" means `$DISCORD_STATE_DIR/.env`.
+example, "`.env`" means `<state>/.env`.
 
 ---
 
@@ -35,10 +34,10 @@ example, "`.env`" means `$DISCORD_STATE_DIR/.env`.
 
 Read both state files and give the user a complete picture:
 
-1. **Token** — check `$DISCORD_STATE_DIR/.env` for
+1. **Token** — check `<state>/.env` for
    `DISCORD_BOT_TOKEN`. Show set/not-set; if set, show first 6 chars masked.
 
-2. **Access** — read `$DISCORD_STATE_DIR/access.json` (missing file
+2. **Access** — read `<state>/access.json` (missing file
    = defaults: `dmPolicy: "pairing"`, empty allowlist). Show:
    - DM policy and what it means in one line
    - Allowed senders: count, and list display names or snowflakes
@@ -88,10 +87,10 @@ as the correct long-term choice. Don't skip the lockdown offer.
 1. Treat `$ARGUMENTS` as the token (trim whitespace). Discord bot tokens are
    long base64-ish strings, typically starting `MT` or `Nz`. Generated from
    Developer Portal → Bot → Reset Token; only shown once.
-2. `mkdir -p $DISCORD_STATE_DIR`
+2. `mkdir -p <state>`
 3. Read existing `.env` if present; update/add the `DISCORD_BOT_TOKEN=` line,
    preserve other keys. Write back, no quotes around the value.
-4. `chmod 600 $DISCORD_STATE_DIR/.env` — the token is a credential.
+4. `chmod 600 <state>/.env` — the token is a credential.
 5. Confirm, then show the no-args status so the user sees where they stand.
 
 ### `clear` — remove the token

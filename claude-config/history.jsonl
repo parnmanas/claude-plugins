@@ -10,3 +10,22 @@
 {"display":"exit","pastedContents":{},"timestamp":1775653187012,"project":"/mnt/data/repositories/claude-plugins","sessionId":"1985f31c-3b1c-4084-a05d-21f399b38be1"}
 {"display":"commit/push 해줘","pastedContents":{},"timestamp":1775653208004,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
 {"display":"credentials.json 말고는 다 commit해 (.gitignore)","pastedContents":{},"timestamp":1775653273140,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"/mcp","pastedContents":{},"timestamp":1775657199117,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"mcp 리스트 열었더니 discord:discord 라고 나오는데, 이거 잘못된거 아냐? 어딘가 설정이 잘못된 것 같은데","pastedContents":{},"timestamp":1775657230042,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"바궈봐","pastedContents":{},"timestamp":1775657469813,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"여기를 바꾸는게 아닌거 같은데, mcp:marketplace 아니야?","pastedContents":{},"timestamp":1775657516680,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"discord@claude-plugins-official 을 찾아봐... 거기 어떻게 하고 있는지 보면 되잖아. github 에 있어.","pastedContents":{},"timestamp":1775657589289,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"Failed to reconnect to plugin:discord:discord.","pastedContents":{},"timestamp":1775657675273,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"저렇게 이름만 바꾼다고 갑자기 연결된다고?","pastedContents":{},"timestamp":1775657720314,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"CLAUDE_CONFIG_DIR 을 새로 설정해서 claude 를 완전 새로 설정하고 plugin 깐다음에 /discord:configure 를 하면 왜 예전에 있던 설정들이 다시 나오는거야?","pastedContents":{},"timestamp":1775657890451,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"fallback 하지마 없으면 안나오도록 해","pastedContents":{},"timestamp":1775657930151,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"아니!!!!!!! DISCORD_STATE_DIR 이 뭔데 갑자기 설정하라 마라야","pastedContents":{},"timestamp":1775657987127,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"아니.... 설정 안하지. 일반적으로는 설정 안하지","pastedContents":{},"timestamp":1775658028728,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"리눅스 깔고 그냥 claude-cli 깔고 실행했는데, CLAUDE_CONFIG_DIR 이 설정되어서 넘어온다고?","pastedContents":{},"timestamp":1775658085354,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"이해가 안가? CLAUDE_CONFIG_DIR 이 설정 안되있을 때는 ~/.claude 를 쓰고, CLAUDE_CONFIG_DIR 이 설정되어 있을 때는 이 폴더를 쓰는데, fallback 은 하지 말라고","pastedContents":{},"timestamp":1775658154777,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"DISCORD_STATE_DIR 이 뭔데?","pastedContents":{},"timestamp":1775658195305,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"/model","pastedContents":{},"timestamp":1775658221418,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"/effort best","pastedContents":{},"timestamp":1775658234456,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"/effort max","pastedContents":{},"timestamp":1775658241992,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"ultrathink 앞에 대화 읽어보고 제발 좀 정신 차리고 정리 좀 해.","pastedContents":{},"timestamp":1775658255310,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
+{"display":"commit/push 해봐","pastedContents":{},"timestamp":1775658515740,"project":"/mnt/data/repositories/claude-plugins","sessionId":"19c0d343-3955-4967-b4f4-96123f3a8659"}
