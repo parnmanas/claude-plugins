@@ -3,19 +3,19 @@
 /**
  * AWB MCP Proxy — stdio-to-HTTP bridge with Channel support
  *
- * Reads connection config from ~/.claude/channels/awb/config.json
- * and proxies MCP JSON-RPC over stdio to the remote AWB server.
+ * Architecture:
+ *   Claude CLI <--stdio--> proxy.mjs <--HTTP--> AWB Server
+ *                                    <--SSE---  AWB /api/events/stream
  *
- * When loaded as a channel (--channels), emits notifications/claude/channel
- * for incoming agent triggers via SSE stream.
- * When loaded as a regular MCP server, triggers are available via
- * get_pending_triggers / subscribe_events tools (polling fallback).
+ * Two responsibilities:
+ * 1. Proxy: Forward MCP JSON-RPC messages between Claude CLI (stdio) and AWB server (HTTP)
+ * 2. Channel: Listen to AWB's SSE event stream and deliver agent_trigger events to Claude
  *
- * Config format:
- * {
- *   "url": "https://awb.example.com:7700",
- *   "apiKey": "awb_..."
- * }
+ * The proxy intercepts the MCP `initialize` handshake to inject `claude/channel`
+ * capability — without this, Claude CLI ignores channel notifications.
+ *
+ * Config: ~/.claude/channels/awb/config.json
+ * { "url": "https://awb.example.com:7700", "apiKey": "awb_..." }
  */
 
 import { readFileSync, existsSync } from 'fs';
@@ -23,20 +23,55 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
 
-const CONFIG_PATH = join(homedir(), '.claude', 'channels', 'awb', 'config.json');
+// ─── Constants ────────────────────────────────────────────
 
-// Prevent unhandled errors from crashing the process (and Claude CLI with it)
+const CONFIG_PATH = join(
+  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+  'channels', 'awb', 'config.json',
+);
+const RECONNECT_INITIAL_MS = 2000;
+const RECONNECT_MAX_MS = 30000;
+const REQUEST_TIMEOUT_MS = 30000;
+
+const CHANNEL_INSTRUCTIONS = [
+  'This server uses push-based triggers via SSE.',
+  'If you receive <channel> events with type="agent_trigger", react to them immediately — claim the ticket, read it, and process it.',
+  'Do NOT poll or create cron jobs for get_pending_triggers or subscribe_events — triggers arrive automatically via push.',
+].join('\n');
+
+// ─── Helpers ──────────────────────────────────────────────
+
+/** Guard against unhandled errors crashing Claude CLI */
 process.on('uncaughtException', (err) => {
-  process.stderr.write(`[AWB] Uncaught error: ${err.message}\n`);
+  log(`Uncaught error: ${err.message}`);
 });
 process.on('unhandledRejection', (err) => {
-  process.stderr.write(`[AWB] Unhandled rejection: ${err}\n`);
+  log(`Unhandled rejection: ${err}`);
 });
 
+function log(msg) {
+  process.stderr.write(`[AWB] ${msg}\n`);
+}
+
+function send(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\n');
+}
+
+function sendError(id, code, message) {
+  send({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
+}
+
+/** Send a channel notification to Claude — the core delivery mechanism */
+function sendChannelEvent(content, meta = {}) {
+  send({
+    jsonrpc: '2.0',
+    method: 'notifications/claude/channel',
+    params: { content, meta },
+  });
+}
+
 function loadConfig() {
-  if (!existsSync(CONFIG_PATH)) {
-    return null;
-  }
+  if (!existsSync(CONFIG_PATH)) return null;
   try {
     return JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
   } catch {
@@ -44,293 +79,299 @@ function loadConfig() {
   }
 }
 
-function sendResponse(obj) {
-  process.stdout.write(JSON.stringify(obj) + '\n');
+// ─── SSE Event Stream ─────────────────────────────────────
+
+/**
+ * Connect to AWB's SSE /api/events/stream and forward agent_trigger events
+ * as claude/channel notifications. Reconnects with exponential backoff.
+ *
+ * AWB SSE format (from events.controller.ts):
+ *   event: agent_trigger
+ *   data: {"event_type":"agent_trigger","ticket_id":"...","action":"assignee",
+ *          "field_changed":"<trigger_id>","actor_name":"<agent_id>","timestamp":"..."}
+ */
+class EventStream {
+  #url;
+  #retryDelay = RECONNECT_INITIAL_MS;
+  #abortController = null;
+  #stopped = false;
+
+  constructor(config) {
+    this.#url = `${config.url.replace(/\/$/, '')}/api/events/stream?token=${encodeURIComponent(config.apiKey)}`;
+  }
+
+  start() {
+    this.#stopped = false;
+    this.#connect();
+  }
+
+  stop() {
+    this.#stopped = true;
+    this.#abortController?.abort();
+  }
+
+  async #connect() {
+    if (this.#stopped) return;
+
+    try {
+      this.#abortController = new AbortController();
+      const resp = await fetch(this.#url, {
+        headers: { Accept: 'text/event-stream' },
+        signal: this.#abortController.signal,
+      });
+
+      if (!resp.ok) {
+        log(`SSE error: ${resp.status} ${resp.statusText}`);
+        this.#scheduleReconnect();
+        return;
+      }
+
+      log('SSE connected');
+      this.#retryDelay = RECONNECT_INITIAL_MS;
+      await this.#readStream(resp.body);
+
+      // Stream ended cleanly — reconnect
+      log('SSE stream ended, reconnecting...');
+      this.#scheduleReconnect();
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      log(`SSE error: ${err.message}`);
+      this.#scheduleReconnect();
+    }
+  }
+
+  async #readStream(body) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let eventType = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          // SSE event type field — NestJS sets this from MessageEvent.type
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data && eventType === 'agent_trigger') {
+            this.#handleTrigger(data);
+          }
+          // Reset after processing data (SSE spec: dispatch on blank line,
+          // but we process eagerly since each event: + data: pair is atomic)
+          eventType = '';
+        } else if (line === '') {
+          // Blank line = end of SSE event block
+          eventType = '';
+        }
+      }
+    }
+  }
+
+  #handleTrigger(raw) {
+    try {
+      const ev = JSON.parse(raw);
+      // Map AWB event fields → channel notification meta
+      // AWB events.controller uses: action=role, field_changed=trigger_id, actor_name=agent_id
+      sendChannelEvent(
+        `[AWB Trigger] ticket=${ev.ticket_id} role=${ev.action} trigger=${ev.field_changed}`,
+        {
+          type: 'agent_trigger',
+          ticket_id: ev.ticket_id || '',
+          trigger_id: ev.field_changed || '',
+          agent_id: ev.actor_name || '',
+          role: ev.action || '',
+          timestamp: ev.timestamp || new Date().toISOString(),
+        },
+      );
+      log(`Trigger forwarded: ticket=${ev.ticket_id} role=${ev.action}`);
+    } catch (err) {
+      log(`Failed to parse trigger: ${err.message}`);
+    }
+  }
+
+  #scheduleReconnect() {
+    if (this.#stopped) return;
+    setTimeout(() => this.#connect(), this.#retryDelay);
+    this.#retryDelay = Math.min(this.#retryDelay * 1.5, RECONNECT_MAX_MS);
+  }
 }
 
-function sendError(id, code, message) {
-  sendResponse({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
-}
+// ─── MCP Proxy ────────────────────────────────────────────
 
-/** Send a channel notification to Claude (works only when loaded as channel) */
-function sendChannelNotification(content, meta = {}) {
-  sendResponse({
-    jsonrpc: '2.0',
-    method: 'notifications/claude/channel',
-    params: { content, meta },
+/**
+ * Forward a JSON-RPC message to the AWB MCP server over HTTP.
+ * Returns { body, sessionId } for JSON responses,
+ * or { lines, sessionId } for SSE (streaming) responses.
+ */
+async function forwardToServer(mcpUrl, apiKey, msg, sessionId) {
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+    Authorization: `Bearer ${apiKey}`,
+  };
+  if (sessionId) headers['mcp-session-id'] = sessionId;
+
+  const resp = await fetch(mcpUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(msg),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
+
+  const newSessionId = resp.headers.get('mcp-session-id') || sessionId;
+  const contentType = resp.headers.get('content-type') || '';
+
+  if (contentType.includes('text/event-stream')) {
+    // SSE response — extract data: lines as separate JSON-RPC messages
+    const text = await resp.text();
+    const lines = text.split('\n')
+      .filter(l => l.startsWith('data: '))
+      .map(l => l.slice(6).trim())
+      .filter(Boolean);
+    return { sessionId: newSessionId, lines };
+  }
+
+  // JSON response
+  const text = await resp.text();
+  let body = null;
+  if (text.trim()) {
+    try { body = JSON.parse(text); } catch { /* malformed */ }
+  }
+  return { sessionId: newSessionId, body };
 }
 
-function handleNotConfigured(rl) {
-  process.stderr.write('[AWB] Not configured. Run /awb:setup <server-url> <api-key> to connect.\n');
+/**
+ * Patch the initialize response to declare claude/channel capability.
+ * Without this, Claude CLI won't process notifications/claude/channel messages.
+ * Ref: Discord plugin declares this via MCP SDK capabilities.experimental['claude/channel']
+ */
+function patchInitializeResponse(body) {
+  if (!body?.result) return body;
+
+  // Inject channel capability
+  const caps = body.result.capabilities ??= {};
+  const exp = caps.experimental ??= {};
+  exp['claude/channel'] = {};
+
+  // Append channel instructions
+  const existing = body.result.instructions || '';
+  body.result.instructions = [existing, '', CHANNEL_INSTRUCTIONS]
+    .join('\n').trim();
+
+  return body;
+}
+
+// ─── Entry Points ─────────────────────────────────────────
+
+/** Handle the not-configured state — respond to MCP handshake with empty tools */
+function runUnconfigured(rl) {
+  log('Not configured. Run /awb:setup <server-url> <api-key> to connect.');
 
   rl.on('line', (line) => {
     try {
       const msg = JSON.parse(line);
       if (msg.method === 'initialize') {
-        sendResponse({
+        send({
           jsonrpc: '2.0',
           id: msg.id,
           result: {
             protocolVersion: '2025-03-26',
             capabilities: { tools: {} },
-            serverInfo: { name: 'ai-workflow-board', version: '0.1.0' },
+            serverInfo: { name: 'ai-workflow-board', version: '0.2.0' },
           },
         });
       } else if (msg.method === 'tools/list') {
-        sendResponse({ jsonrpc: '2.0', id: msg.id, result: { tools: [] } });
+        send({ jsonrpc: '2.0', id: msg.id, result: { tools: [] } });
       } else if (msg.method === 'notifications/initialized') {
-        // notification — no response needed
+        // no response
       } else if (msg.id !== undefined) {
         sendError(msg.id, -32000, 'AWB not configured. Run /awb:setup <server-url> <api-key>');
       }
-    } catch {}
+    } catch { /* ignore malformed */ }
   });
 }
 
-// ─── SSE Event Stream for Channel Push ─────────────────────
-
-/**
- * Connect to AWB's SSE event stream and forward agent_trigger events
- * as channel notifications to Claude.
- */
-function startEventStream(config) {
-  const streamUrl = `${config.url.replace(/\/$/, '')}/api/events/stream?token=${encodeURIComponent(config.apiKey)}`;
-  let retryDelay = 2000;
-  let abortController = null;
-
-  async function connect() {
-    try {
-      abortController = new AbortController();
-      const resp = await fetch(streamUrl, {
-        headers: { 'Accept': 'text/event-stream' },
-        signal: abortController.signal,
-      });
-
-      if (!resp.ok) {
-        process.stderr.write(`[AWB] SSE stream error: ${resp.status} ${resp.statusText}\n`);
-        scheduleReconnect();
-        return;
-      }
-
-      process.stderr.write('[AWB] SSE event stream connected\n');
-      retryDelay = 2000; // reset on successful connection
-
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // keep incomplete line in buffer
-
-        let eventType = '';
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim();
-            if (data && eventType === 'agent_trigger') {
-              handleTriggerEvent(data);
-            }
-            eventType = '';
-          } else if (line === '') {
-            eventType = '';
-          }
-        }
-      }
-
-      // Stream ended cleanly — reconnect
-      process.stderr.write('[AWB] SSE stream ended, reconnecting...\n');
-      scheduleReconnect();
-    } catch (err) {
-      if (err.name === 'AbortError') return; // intentional disconnect
-      process.stderr.write(`[AWB] SSE stream error: ${err.message}\n`);
-      scheduleReconnect();
-    }
-  }
-
-  function handleTriggerEvent(data) {
-    try {
-      const event = JSON.parse(data);
-      // event from events.controller: { event_type, ticket_id, entity_type, action (role),
-      //   field_changed (trigger_id), actor_name (agent_id), timestamp }
-      const content = `[AWB Trigger] ticket=${event.ticket_id} role=${event.action} trigger=${event.field_changed}`;
-      sendChannelNotification(content, {
-        type: 'agent_trigger',
-        ticket_id: event.ticket_id || '',
-        trigger_id: event.field_changed || '',
-        agent_id: event.actor_name || '',
-        role: event.action || '',
-        timestamp: event.timestamp || new Date().toISOString(),
-      });
-      process.stderr.write(`[AWB] Trigger forwarded: ticket=${event.ticket_id} role=${event.action}\n`);
-    } catch (err) {
-      process.stderr.write(`[AWB] Failed to parse trigger event: ${err.message}\n`);
-    }
-  }
-
-  function scheduleReconnect() {
-    setTimeout(connect, retryDelay);
-    retryDelay = Math.min(retryDelay * 1.5, 30000); // exponential backoff, max 30s
-  }
-
-  // Return cleanup function
-  connect();
-  return () => {
-    if (abortController) abortController.abort();
-  };
-}
-
-// ─── Main Proxy ────────────────────────────────────────────
-
-function handleProxy(rl, config) {
+/** Main proxy — bridges stdio MCP to remote AWB server + SSE channel */
+function runProxy(rl, config) {
   const mcpUrl = config.url.replace(/\/$/, '') + '/mcp';
   let sessionId = null;
-  let stopStream = null;
+  let eventStream = null;
 
   rl.on('line', async (line) => {
     let msg;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      return; // malformed JSON, ignore
-    }
+    try { msg = JSON.parse(line); } catch { return; }
 
-    // Intercept initialize to inject channel capability
+    // ── Intercept: initialize ──────────────────────────────
+    // Patch the server's response to include claude/channel capability
     if (msg.method === 'initialize') {
       try {
-        const result = await forwardToServer(mcpUrl, config, msg, sessionId);
+        const result = await forwardToServer(mcpUrl, config.apiKey, msg, sessionId);
         if (result.sessionId) sessionId = result.sessionId;
-
-        // Patch capabilities to include channel support
-        const body = result.body;
-        if (body.result && body.result.capabilities) {
-          if (!body.result.capabilities.experimental) {
-            body.result.capabilities.experimental = {};
-          }
-          body.result.capabilities.experimental['claude/channel'] = {};
-        }
-
-        // Add instructions for push mode
-        if (body.result) {
-          body.result.instructions = [
-            body.result.instructions || '',
-            '',
-            'This server uses push-based triggers via SSE.',
-            'If you receive <channel> events with type="agent_trigger", react to them immediately — claim the ticket, read it, and process it.',
-            'Do NOT poll or create cron jobs for get_pending_triggers or subscribe_events — triggers arrive automatically via push.',
-          ].join('\n').trim();
-        }
-
-        sendResponse(body);
+        send(patchInitializeResponse(result.body));
       } catch (err) {
-        process.stderr.write(`[AWB] Initialize error: ${err.message}\n`);
-        if (msg.id !== undefined) {
-          sendError(msg.id, -32000, `AWB proxy error: ${err.message}`);
-        }
+        log(`Initialize error: ${err.message}`);
+        if (msg.id !== undefined) sendError(msg.id, -32000, `AWB proxy error: ${err.message}`);
       }
       return;
     }
 
-    // Start SSE stream after initialized notification
+    // ── Intercept: initialized notification ────────────────
+    // Start SSE stream AFTER handshake completes (Claude is ready to receive)
     if (msg.method === 'notifications/initialized') {
-      if (!stopStream) {
-        stopStream = startEventStream(config);
+      if (!eventStream) {
+        eventStream = new EventStream(config);
+        eventStream.start();
+        log('SSE event stream started (post-handshake)');
       }
-      // notification — no response needed
       return;
     }
 
-    // All other messages: forward to server
+    // ── Forward everything else to AWB server ──────────────
     try {
-      const result = await forwardToServer(mcpUrl, config, msg, sessionId);
+      const result = await forwardToServer(mcpUrl, config.apiKey, msg, sessionId);
       if (result.sessionId) sessionId = result.sessionId;
-      if (result.body && msg.id !== undefined) {
-        sendResponse(result.body);
-      } else if (result.lines) {
-        // SSE response — multiple JSON-RPC messages
+
+      if (result.lines) {
+        // SSE response — write each JSON-RPC message directly
         for (const line of result.lines) {
           process.stdout.write(line + '\n');
         }
+      } else if (result.body && msg.id !== undefined) {
+        send(result.body);
       }
     } catch (err) {
-      process.stderr.write(`[AWB] Proxy error: ${err.message}\n`);
-
-      // Return MCP error response so Claude CLI doesn't hang
+      log(`Proxy error: ${err.message}`);
       if (msg.id !== undefined) {
         const errMsg = err.cause?.code === 'ECONNREFUSED'
           ? `AWB server unreachable at ${config.url}. Is the server running?`
           : `AWB proxy error: ${err.message}`;
         sendError(msg.id, -32000, errMsg);
       }
-      // If it was a notification (no id), just log and continue
     }
   });
 
   rl.on('close', () => {
-    if (stopStream) stopStream();
+    eventStream?.stop();
     process.exit(0);
   });
 
-  process.stderr.write(`[AWB] Proxy ready (server: ${config.url})\n`);
+  log(`Proxy ready (server: ${config.url})`);
 }
 
-async function forwardToServer(mcpUrl, config, msg, sessionId) {
-  const headers = {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json, text/event-stream',
-    'Authorization': `Bearer ${config.apiKey}`,
-  };
-  if (sessionId) {
-    headers['mcp-session-id'] = sessionId;
-  }
-
-  const resp = await fetch(mcpUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(msg),
-    signal: AbortSignal.timeout(30000),
-  });
-
-  const newSessionId = resp.headers.get('mcp-session-id');
-  const contentType = resp.headers.get('content-type') || '';
-
-  if (contentType.includes('text/event-stream')) {
-    const text = await resp.text();
-    const lines = [];
-    for (const chunk of text.split('\n')) {
-      if (chunk.startsWith('data: ')) {
-        const data = chunk.slice(6).trim();
-        if (data) lines.push(data);
-      }
-    }
-    return { sessionId: newSessionId || sessionId, lines };
-  } else {
-    const text = await resp.text();
-    let body = null;
-    if (text.trim()) {
-      try {
-        body = JSON.parse(text);
-      } catch {
-        body = null;
-      }
-    }
-    return { sessionId: newSessionId || sessionId, body };
-  }
-}
-
-// ─── Main ──────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────
 
 const config = loadConfig();
 const rl = createInterface({ input: process.stdin });
 
-if (!config || !config.url || !config.apiKey) {
-  handleNotConfigured(rl);
+if (!config?.url || !config?.apiKey) {
+  runUnconfigured(rl);
 } else {
-  handleProxy(rl, config);
+  runProxy(rl, config);
 }
