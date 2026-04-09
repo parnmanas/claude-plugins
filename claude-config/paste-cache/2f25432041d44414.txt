@@ -1,0 +1,17 @@
+ discord 플러그인 폴더구조가 이상해.                                              
+    ⎿  Error: Failed to clone marketplace repository: Cloning into 'D:\Repository\ 
+  KakaoVX\stepup.claude-config\plugins\marketplaces\temp_1775701862618'...         
+                                                                                   
+       fatal: cannot create directory at                                           
+                                                                                   
+                                                                                   
+       'claude-config/plugins/marketplaces/parnmanas/claude-config/plugins/marketp 
+  laces/claude-plugins-official/plugins/claude-code-setup/skills/claude-automation 
+  -recommender': Filename too long                                                 
+       warning: Clone succeeded, but checkout failed.                              
+                                                                                   
+                                                                                   
+       You can inspect what was checked out with 'git status'                      
+                                                                                   
+                                                                                   
+       and retry with 'git restore --source=HEAD :/'             

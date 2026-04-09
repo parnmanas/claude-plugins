@@ -1,0 +1,797 @@
+warning: in the working copy of 'claude-config/.claude.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/cache/changelog.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/history.jsonl', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/known_marketplaces.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/asana/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/asana/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/context7/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/context7/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/.npmrc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/ACCESS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/bun.lock', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/skills/access/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/skills/configure/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/.npmrc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/bun.lock', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/firebase/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/firebase/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/github/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/github/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/gitlab/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/gitlab/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/greptile/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/greptile/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/greptile/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/.npmrc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/ACCESS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/bun.lock', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/skills/access/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/skills/configure/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/laravel-boost/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/laravel-boost/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/linear/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/linear/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/playwright/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/playwright/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/serena/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/serena/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/slack/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/slack/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/supabase/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/supabase/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/.npmrc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/ACCESS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/bun.lock', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/skills/access/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/skills/configure/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/terraform/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/terraform/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/agent-sdk-dev/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/agent-sdk-dev/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/agent-sdk-dev/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/agent-sdk-dev/agents/agent-sdk-verifier-py.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/agent-sdk-dev/agents/agent-sdk-verifier-ts.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/agent-sdk-dev/commands/new-sdk-app.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/clangd-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/clangd-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-code-setup/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-code-setup/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-code-setup/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-code-setup/skills/claude-automation-recommender/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-code-setup/skills/claude-automation-recommender/references/hooks-patterns.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-code-setup/skills/claude-automation-recommender/references/mcp-servers.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-code-setup/skills/claude-automation-recommender/references/plugins-reference.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-code-setup/skills/claude-automation-recommender/references/skills-reference.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-code-setup/skills/claude-automation-recommender/references/subagent-templates.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-md-management/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-md-management/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-md-management/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-md-management/commands/revise-claude-md.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-md-management/skills/claude-md-improver/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-md-management/skills/claude-md-improver/references/quality-criteria.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-md-management/skills/claude-md-improver/references/templates.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/claude-md-management/skills/claude-md-improver/references/update-guidelines.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/code-review/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/code-review/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/code-review/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/code-review/commands/code-review.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/code-simplifier/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/code-simplifier/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/code-simplifier/agents/code-simplifier.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/commit-commands/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/commit-commands/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/commit-commands/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/commit-commands/commands/clean_gone.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/commit-commands/commands/commit-push-pr.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/commit-commands/commands/commit.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/csharp-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/csharp-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/example-plugin/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/example-plugin/.mcp.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/example-plugin/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/example-plugin/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/example-plugin/commands/example-command.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/example-plugin/skills/example-command/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/example-plugin/skills/example-skill/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/explanatory-output-style/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/explanatory-output-style/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/explanatory-output-style/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/explanatory-output-style/hooks-handlers/session-start.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/explanatory-output-style/hooks/hooks.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/feature-dev/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/feature-dev/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/feature-dev/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/feature-dev/agents/code-architect.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/feature-dev/agents/code-explorer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/feature-dev/agents/code-reviewer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/feature-dev/commands/feature-dev.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/frontend-design/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/frontend-design/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/frontend-design/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/frontend-design/skills/frontend-design/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/gopls-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/gopls-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/agents/conversation-analyzer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/commands/configure.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/commands/help.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/commands/hookify.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/commands/list.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/core/config_loader.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/core/rule_engine.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/examples/console-log-warning.local.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/examples/dangerous-rm.local.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/examples/require-tests-stop.local.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/examples/sensitive-files-warning.local.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/hooks.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/posttooluse.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/pretooluse.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/stop.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/userpromptsubmit.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/skills/writing-rules/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/jdtls-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/jdtls-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/kotlin-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/kotlin-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/learning-output-style/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/learning-output-style/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/learning-output-style/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/learning-output-style/hooks-handlers/session-start.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/learning-output-style/hooks/hooks.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/lua-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/lua-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/evals/trigger_eval.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/references/adversarial_prompts.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/references/attempt_agent.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/references/known_constructions.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/references/model_tier_defaults.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/references/presentation_prompts.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/references/solver_heuristics.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/references/verifier_patterns.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/scripts/check_latex.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/math-olympiad/skills/math-olympiad/scripts/compile_pdf.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-app/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-app/references/apps-sdk-messages.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-app/references/iframe-sandbox.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-app/references/widget-templates.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/references/auth.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/references/deploy-cloudflare-workers.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/references/elicitation.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/references/remote-http-scaffold.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/references/resources-and-prompts.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/references/server-capabilities.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/references/tool-design.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcp-server/references/versions.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcpb/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcpb/references/local-security.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/mcp-server-dev/skills/build-mcpb/references/manifest-schema.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/php-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/php-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/skills/playground/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/skills/playground/templates/code-map.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/skills/playground/templates/concept-map.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/skills/playground/templates/data-explorer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/skills/playground/templates/design-playground.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/skills/playground/templates/diff-review.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/playground/skills/playground/templates/document-critique.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/agents/agent-creator.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/agents/plugin-validator.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/agents/skill-reviewer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/commands/create-plugin.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/agent-development/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/agent-development/examples/agent-creation-prompt.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/agent-development/examples/complete-agent-examples.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/agent-development/references/agent-creation-system-prompt.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/agent-development/references/system-prompt-design.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/agent-development/references/triggering-examples.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/agent-development/scripts/validate-agent.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/examples/plugin-commands.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/examples/simple-commands.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/references/advanced-workflows.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/references/documentation-patterns.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/references/frontmatter-reference.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/references/interactive-commands.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/references/marketplace-considerations.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/references/plugin-features-reference.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/command-development/references/testing-strategies.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/examples/load-context.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/examples/validate-bash.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/examples/validate-write.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/references/advanced.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/references/migration.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/references/patterns.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/scripts/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/scripts/hook-linter.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/scripts/test-hook.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/scripts/validate-hook-schema.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/mcp-integration/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/mcp-integration/examples/http-server.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/mcp-integration/examples/sse-server.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/mcp-integration/examples/stdio-server.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/mcp-integration/references/authentication.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/mcp-integration/references/server-types.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/mcp-integration/references/tool-usage.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-settings/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-settings/examples/create-settings-command.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-settings/examples/example-settings.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-settings/examples/read-settings-hook.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-settings/references/parsing-techniques.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-settings/references/real-world-examples.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-settings/scripts/parse-frontmatter.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-settings/scripts/validate-settings.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-structure/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-structure/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-structure/examples/advanced-plugin.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-structure/examples/minimal-plugin.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-structure/examples/standard-plugin.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-structure/references/component-patterns.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/plugin-structure/references/manifest-reference.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/skill-development/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/skill-development/references/skill-creator-original.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/agents/code-reviewer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/agents/code-simplifier.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/agents/comment-analyzer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/agents/pr-test-analyzer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/agents/silent-failure-hunter.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/agents/type-design-analyzer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pr-review-toolkit/commands/review-pr.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pyright-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/pyright-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/commands/cancel-ralph.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/commands/help.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/commands/ralph-loop.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/hooks/hooks.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/hooks/stop-hook.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ruby-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/ruby-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/rust-analyzer-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/rust-analyzer-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/hooks.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/.claude-plugin/plugin.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/LICENSE.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/agents/analyzer.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/agents/comparator.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/agents/grader.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/assets/eval_review.html', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/eval-viewer/generate_review.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/eval-viewer/viewer.html', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/references/schemas.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/generate_report.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/improve_description.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/package_skill.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/quick_validate.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/run_eval.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/run_loop.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/utils.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/swift-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/swift-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/typescript-lsp/LICENSE', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'claude-config/plugins/marketplaces/claude-plugins-official/plugins/typescript-lsp/README.md', LF will be replaced by CRLF the next time Git touches it
+ claude-config/.claude.json                         |  690 +-
+ .../backups/.claude.json.backup.1775660190940      |  568 --
+ .../backups/.claude.json.backup.1775660392373      |  583 --
+ .../backups/.claude.json.backup.1775663060541      |  552 --
+ .../backups/.claude.json.backup.1775663132328      |  583 --
+ .../backups/.claude.json.backup.1775663397373      |  584 --
+ claude-config/cache/changelog.md                   |   49 +
+ claude-config/history.jsonl                        |    7 +
+ claude-config/plugins/known_marketplaces.json      |    2 +-
+ .../.claude-plugin/marketplace.json                |   33 +
+ .../marketplaces/claude-plugins-official/.gcs-sha  |    2 +-
+ .../parnmanas/.claude-plugin/marketplace.json      |   29 -
+ .../plugins/marketplaces/parnmanas/.gitignore      |    2 -
+ .../ai-workflow-board/.claude-plugin/plugin.json   |   11 -
+ .../parnmanas/ai-workflow-board/.mcp.json          |   11 -
+ .../parnmanas/claude-config/.claude.json           |  568 --
+ .../backups/.claude.json.backup.1775657313744      |  558 --
+ .../backups/.claude.json.backup.1775657481739      |  559 --
+ .../backups/.claude.json.backup.1775657615165      |  561 --
+ .../backups/.claude.json.backup.1775657703119      |  562 --
+ .../backups/.claude.json.backup.1775657908581      |  567 --
+ .../parnmanas/claude-config/cache/changelog.md     | 2779 --------
+ .../0d5a89d1133bc90b@v1                            |  147 -
+ .../0d5a89d1133bc90b@v2                            |  146 -
+ .../14191e839e4fb083@v1                            |  925 ---
+ .../14191e839e4fb083@v2                            |  932 ---
+ .../14191e839e4fb083@v3                            |  931 ---
+ .../14191e839e4fb083@v4                            |  929 ---
+ .../14191e839e4fb083@v5                            |  926 ---
+ .../14191e839e4fb083@v6                            |  925 ---
+ .../14191e839e4fb083@v7                            |  925 ---
+ .../147c196583b243a5@v1                            |  925 ---
+ .../147c196583b243a5@v2                            |  925 ---
+ .../18e85014ded30245@v1                            |  110 -
+ .../18e85014ded30245@v2                            |  109 -
+ .../3e006c7571c1f4fc@v1                            |   11 -
+ .../3e006c7571c1f4fc@v2                            |   11 -
+ .../3e006c7571c1f4fc@v3                            |    8 -
+ .../4c77e8281cef6b03@v1                            |  112 -
+ .../4c77e8281cef6b03@v2                            |  110 -
+ .../8af9b7f0739bf1fa@v1                            |   11 -
+ .../8af9b7f0739bf1fa@v2                            |   11 -
+ .../8af9b7f0739bf1fa@v3                            |    8 -
+ .../bc7cada7d44819dc@v1                            |    1 -
+ .../bc7cada7d44819dc@v2                            |    2 -
+ .../c9a958e119b0515a@v1                            |   11 -
+ .../c9a958e119b0515a@v2                            |   11 -
+ .../c9a958e119b0515a@v3                            |    8 -
+ .../f1a978d7e0df0b76@v1                            |  143 -
+ .../f1a978d7e0df0b76@v2                            |  143 -
+ .../0d5a89d1133bc90b@v1                            |  137 -
+ .../0d5a89d1133bc90b@v2                            |  147 -
+ .../14191e839e4fb083@v1                            |  925 ---
+ .../14191e839e4fb083@v2                            |  925 ---
+ .../18e85014ded30245@v1                            |   99 -
+ .../18e85014ded30245@v2                            |  110 -
+ .../4c77e8281cef6b03@v1                            |  112 -
+ .../4c77e8281cef6b03@v2                            |  112 -
+ .../f1a978d7e0df0b76@v1                            |  143 -
+ .../f1a978d7e0df0b76@v2                            |  143 -
+ .../parnmanas/claude-config/history.jsonl          |   33 -
+ .../discord/0.0.4/.claude-plugin/plugin.json       |   11 -
+ .../cache/parnmanas/discord/0.0.4/.mcp.json        |    8 -
+ .../plugins/cache/parnmanas/discord/0.0.4/.npmrc   |    1 -
+ .../cache/parnmanas/discord/0.0.4/ACCESS.md        |  143 -
+ .../plugins/cache/parnmanas/discord/0.0.4/LICENSE  |  202 -
+ .../cache/parnmanas/discord/0.0.4/PATCHES.md       |  113 -
+ .../cache/parnmanas/discord/0.0.4/README.md        |  110 -
+ .../plugins/cache/parnmanas/discord/0.0.4/bun.lock |  244 -
+ .../cache/parnmanas/discord/0.0.4/package.json     |   14 -
+ .../cache/parnmanas/discord/0.0.4/server.ts        |  925 ---
+ .../parnmanas/discord/0.0.4/skills/access/SKILL.md |  146 -
+ .../discord/0.0.4/skills/configure/SKILL.md        |  109 -
+ .../plugins/install-counts-cache.json              | 1138 ----
+ .../claude-config/plugins/installed_plugins.json   |   16 -
+ .../claude-config/plugins/known_marketplaces.json  |   18 -
+ .../.claude-plugin/marketplace.json                | 1447 ----
+ .../marketplaces/claude-plugins-official/.gcs-sha  |    1 -
+ .../claude-plugins-official/.gitignore             |    2 -
+ .../marketplaces/claude-plugins-official/README.md |   51 -
+ .../asana/.claude-plugin/plugin.json               |    7 -
+ .../external_plugins/asana/.mcp.json               |    6 -
+ .../context7/.claude-plugin/plugin.json            |    7 -
+ .../external_plugins/context7/.mcp.json            |    6 -
+ .../discord/.claude-plugin/plugin.json             |   11 -
+ .../external_plugins/discord/.mcp.json             |    8 -
+ .../external_plugins/discord/.npmrc                |    1 -
+ .../external_plugins/discord/ACCESS.md             |  143 -
+ .../external_plugins/discord/LICENSE               |  202 -
+ .../external_plugins/discord/README.md             |  112 -
+ .../external_plugins/discord/bun.lock              |  244 -
+ .../external_plugins/discord/package.json          |   14 -
+ .../external_plugins/discord/server.ts             |  893 ---
+ .../discord/skills/access/SKILL.md                 |  137 -
+ .../discord/skills/configure/SKILL.md              |   99 -
+ .../fakechat/.claude-plugin/plugin.json            |   13 -
+ .../external_plugins/fakechat/.mcp.json            |    8 -
+ .../external_plugins/fakechat/.npmrc               |    1 -
+ .../external_plugins/fakechat/LICENSE              |  202 -
+ .../external_plugins/fakechat/README.md            |   47 -
+ .../external_plugins/fakechat/bun.lock             |  206 -
+ .../external_plugins/fakechat/package.json         |   16 -
+ .../external_plugins/fakechat/server.ts            |  295 -
+ .../firebase/.claude-plugin/plugin.json            |    7 -
+ .../external_plugins/firebase/.mcp.json            |    6 -
+ .../github/.claude-plugin/plugin.json              |    7 -
+ .../external_plugins/github/.mcp.json              |    9 -
+ .../gitlab/.claude-plugin/plugin.json              |    7 -
+ .../external_plugins/gitlab/.mcp.json              |    6 -
+ .../greptile/.claude-plugin/plugin.json            |   10 -
+ .../external_plugins/greptile/.mcp.json            |    9 -
+ .../external_plugins/greptile/README.md            |   57 -
+ .../imessage/.claude-plugin/plugin.json            |   11 -
+ .../external_plugins/imessage/.mcp.json            |    8 -
+ .../external_plugins/imessage/.npmrc               |    1 -
+ .../external_plugins/imessage/ACCESS.md            |  142 -
+ .../external_plugins/imessage/LICENSE              |  202 -
+ .../external_plugins/imessage/README.md            |   84 -
+ .../external_plugins/imessage/bun.lock             |  207 -
+ .../external_plugins/imessage/package.json         |   17 -
+ .../external_plugins/imessage/server.ts            |  875 ---
+ .../imessage/skills/access/SKILL.md                |  140 -
+ .../imessage/skills/configure/SKILL.md             |   82 -
+ .../laravel-boost/.claude-plugin/plugin.json       |    7 -
+ .../external_plugins/laravel-boost/.mcp.json       |    6 -
+ .../linear/.claude-plugin/plugin.json              |    7 -
+ .../external_plugins/linear/.mcp.json              |    6 -
+ .../playwright/.claude-plugin/plugin.json          |    7 -
+ .../external_plugins/playwright/.mcp.json          |    6 -
+ .../serena/.claude-plugin/plugin.json              |    7 -
+ .../external_plugins/serena/.mcp.json              |    6 -
+ .../slack/.claude-plugin/plugin.json               |    7 -
+ .../external_plugins/slack/.mcp.json               |   10 -
+ .../supabase/.claude-plugin/plugin.json            |    7 -
+ .../external_plugins/supabase/.mcp.json            |    6 -
+ .../telegram/.claude-plugin/plugin.json            |   11 -
+ .../external_plugins/telegram/.mcp.json            |    8 -
+ .../external_plugins/telegram/.npmrc               |    1 -
+ .../external_plugins/telegram/ACCESS.md            |  147 -
+ .../external_plugins/telegram/LICENSE              |  202 -
+ .../external_plugins/telegram/README.md            |   99 -
+ .../external_plugins/telegram/bun.lock             |  212 -
+ .../external_plugins/telegram/package.json         |   14 -
+ .../external_plugins/telegram/server.ts            |  995 ---
+ .../telegram/skills/access/SKILL.md                |  136 -
+ .../telegram/skills/configure/SKILL.md             |   96 -
+ .../terraform/.claude-plugin/plugin.json           |    7 -
+ .../external_plugins/terraform/.mcp.json           |   12 -
+ .../agent-sdk-dev/.claude-plugin/plugin.json       |    8 -
+ .../plugins/agent-sdk-dev/LICENSE                  |  202 -
+ .../plugins/agent-sdk-dev/README.md                |  208 -
+ .../agent-sdk-dev/agents/agent-sdk-verifier-py.md  |  140 -
+ .../agent-sdk-dev/agents/agent-sdk-verifier-ts.md  |  145 -
+ .../plugins/agent-sdk-dev/commands/new-sdk-app.md  |  176 -
+ .../plugins/clangd-lsp/LICENSE                     |  202 -
+ .../plugins/clangd-lsp/README.md                   |   36 -
+ .../claude-code-setup/.claude-plugin/plugin.json   |    9 -
+ .../plugins/claude-code-setup/LICENSE              |  202 -
+ .../plugins/claude-code-setup/README.md            |   29 -
+ .../automation-recommender-example.png             |  Bin 545204 -> 0 bytes
+ .../skills/claude-automation-recommender/SKILL.md  |  288 -
+ .../references/hooks-patterns.md                   |  226 -
+ .../references/mcp-servers.md                      |  263 -
+ .../references/plugins-reference.md                |   98 -
+ .../references/skills-reference.md                 |  408 --
+ .../references/subagent-templates.md               |  181 -
+ .../.claude-plugin/plugin.json                     |    9 -
+ .../plugins/claude-md-management/LICENSE           |  202 -
+ .../plugins/claude-md-management/README.md         |   40 -
+ .../claude-md-improver-example.png                 |  Bin 518778 -> 0 bytes
+ .../commands/revise-claude-md.md                   |   54 -
+ .../revise-claude-md-example.png                   |  Bin 555521 -> 0 bytes
+ .../skills/claude-md-improver/SKILL.md             |  179 -
+ .../references/quality-criteria.md                 |  109 -
+ .../claude-md-improver/references/templates.md     |  253 -
+ .../references/update-guidelines.md                |  150 -
+ .../plugins/code-review/.claude-plugin/plugin.json |    9 -
+ .../plugins/code-review/LICENSE                    |  202 -
+ .../plugins/code-review/README.md                  |  246 -
+ .../plugins/code-review/commands/code-review.md    |   92 -
+ .../code-simplifier/.claude-plugin/plugin.json     |    9 -
+ .../plugins/code-simplifier/LICENSE                |  202 -
+ .../code-simplifier/agents/code-simplifier.md      |   52 -
+ .../commit-commands/.claude-plugin/plugin.json     |    9 -
+ .../plugins/commit-commands/LICENSE                |  202 -
+ .../plugins/commit-commands/README.md              |  225 -
+ .../plugins/commit-commands/commands/clean_gone.md |   53 -
+ .../commit-commands/commands/commit-push-pr.md     |   20 -
+ .../plugins/commit-commands/commands/commit.md     |   17 -
+ .../plugins/csharp-lsp/LICENSE                     |  202 -
+ .../plugins/csharp-lsp/README.md                   |   25 -
+ .../example-plugin/.claude-plugin/plugin.json      |    8 -
+ .../plugins/example-plugin/.mcp.json               |    6 -
+ .../plugins/example-plugin/LICENSE                 |  202 -
+ .../plugins/example-plugin/README.md               |   69 -
+ .../example-plugin/commands/example-command.md     |   39 -
+ .../example-plugin/skills/example-command/SKILL.md |   39 -
+ .../example-plugin/skills/example-skill/SKILL.md   |   84 -
+ .../.claude-plugin/plugin.json                     |    9 -
+ .../plugins/explanatory-output-style/LICENSE       |  202 -
+ .../plugins/explanatory-output-style/README.md     |   72 -
+ .../hooks-handlers/session-start.sh                |   15 -
+ .../explanatory-output-style/hooks/hooks.json      |   15 -
+ .../plugins/feature-dev/.claude-plugin/plugin.json |    8 -
+ .../plugins/feature-dev/LICENSE                    |  202 -
+ .../plugins/feature-dev/README.md                  |  412 --
+ .../plugins/feature-dev/agents/code-architect.md   |   34 -
+ .../plugins/feature-dev/agents/code-explorer.md    |   51 -
+ .../plugins/feature-dev/agents/code-reviewer.md    |   46 -
+ .../plugins/feature-dev/commands/feature-dev.md    |  125 -
+ .../frontend-design/.claude-plugin/plugin.json     |    8 -
+ .../plugins/frontend-design/LICENSE                |  202 -
+ .../plugins/frontend-design/README.md              |   31 -
+ .../skills/frontend-design/SKILL.md                |   42 -
+ .../plugins/gopls-lsp/LICENSE                      |  202 -
+ .../plugins/gopls-lsp/README.md                    |   20 -
+ .../plugins/hookify/.claude-plugin/plugin.json     |    8 -
+ .../plugins/hookify/.gitignore                     |   30 -
+ .../plugins/hookify/LICENSE                        |  202 -
+ .../plugins/hookify/README.md                      |  340 -
+ .../hookify/agents/conversation-analyzer.md        |  176 -
+ .../plugins/hookify/commands/configure.md          |  128 -
+ .../plugins/hookify/commands/help.md               |  175 -
+ .../plugins/hookify/commands/hookify.md            |  231 -
+ .../plugins/hookify/commands/list.md               |   82 -
+ .../plugins/hookify/core/__init__.py               |    0
+ .../plugins/hookify/core/config_loader.py          |  297 -
+ .../plugins/hookify/core/rule_engine.py            |  313 -
+ .../hookify/examples/console-log-warning.local.md  |   14 -
+ .../plugins/hookify/examples/dangerous-rm.local.md |   14 -
+ .../hookify/examples/require-tests-stop.local.md   |   22 -
+ .../examples/sensitive-files-warning.local.md      |   18 -
+ .../plugins/hookify/hooks/__init__.py              |    0
+ .../plugins/hookify/hooks/hooks.json               |   49 -
+ .../plugins/hookify/hooks/posttooluse.py           |   62 -
+ .../plugins/hookify/hooks/pretooluse.py            |   66 -
+ .../plugins/hookify/hooks/stop.py                  |   55 -
+ .../plugins/hookify/hooks/userpromptsubmit.py      |   54 -
+ .../plugins/hookify/matchers/__init__.py           |    0
+ .../plugins/hookify/skills/writing-rules/SKILL.md  |  374 --
+ .../plugins/hookify/utils/__init__.py              |    0
+ .../plugins/jdtls-lsp/LICENSE                      |  202 -
+ .../plugins/jdtls-lsp/README.md                    |   33 -
+ .../plugins/kotlin-lsp/LICENSE                     |  202 -
+ .../plugins/kotlin-lsp/README.md                   |   16 -
+ .../.claude-plugin/plugin.json                     |    9 -
+ .../plugins/learning-output-style/LICENSE          |  202 -
+ .../plugins/learning-output-style/README.md        |   93 -
+ .../hooks-handlers/session-start.sh                |   15 -
+ .../plugins/learning-output-style/hooks/hooks.json |   15 -
+ .../plugins/lua-lsp/LICENSE                        |  202 -
+ .../plugins/lua-lsp/README.md                      |   32 -
+ .../math-olympiad/.claude-plugin/plugin.json       |    8 -
+ .../plugins/math-olympiad/LICENSE                  |  202 -
+ .../plugins/math-olympiad/README.md                |   40 -
+ .../math-olympiad/skills/math-olympiad/SKILL.md    |  411 --
+ .../skills/math-olympiad/evals/trigger_eval.json   |   23 -
+ .../references/adversarial_prompts.md              |  293 -
+ .../math-olympiad/references/attempt_agent.md      |   63 -
+ .../references/known_constructions.md              |   46 -
+ .../references/model_tier_defaults.md              |   66 -
+ .../references/presentation_prompts.md             |  153 -
+ .../math-olympiad/references/solver_heuristics.md  |  135 -
+ .../math-olympiad/references/verifier_patterns.md  |  206 -
+ .../skills/math-olympiad/scripts/check_latex.sh    |    4 -
+ .../skills/math-olympiad/scripts/compile_pdf.sh    |   54 -
+ .../mcp-server-dev/.claude-plugin/plugin.json      |    8 -
+ .../plugins/mcp-server-dev/LICENSE                 |  202 -
+ .../plugins/mcp-server-dev/README.md               |   32 -
+ .../mcp-server-dev/skills/build-mcp-app/SKILL.md   |  352 -
+ .../build-mcp-app/references/apps-sdk-messages.md  |  160 -
+ .../build-mcp-app/references/iframe-sandbox.md     |  149 -
+ .../build-mcp-app/references/widget-templates.md   |  249 -
+ .../skills/build-mcp-server/SKILL.md               |  208 -
+ .../skills/build-mcp-server/references/auth.md     |   92 -
+ .../references/deploy-cloudflare-workers.md        |  106 -
+ .../build-mcp-server/references/elicitation.md     |  129 -
+ .../references/remote-http-scaffold.md             |  211 -
+ .../references/resources-and-prompts.md            |  122 -
+ .../references/server-capabilities.md              |  164 -
+ .../build-mcp-server/references/tool-design.md     |  179 -
+ .../skills/build-mcp-server/references/versions.md |   25 -
+ .../mcp-server-dev/skills/build-mcpb/SKILL.md      |  197 -
+ .../skills/build-mcpb/references/local-security.md |  149 -
+ .../build-mcpb/references/manifest-schema.md       |  156 -
+ .../plugins/php-lsp/LICENSE                        |  202 -
+ .../plugins/php-lsp/README.md                      |   24 -
+ .../plugins/playground/.claude-plugin/plugin.json  |    8 -
+ .../plugins/playground/LICENSE                     |  202 -
+ .../plugins/playground/README.md                   |   28 -
+ .../plugins/playground/skills/playground/SKILL.md  |   76 -
+ .../skills/playground/templates/code-map.md        |  158 -
+ .../skills/playground/templates/concept-map.md     |   73 -
+ .../skills/playground/templates/data-explorer.md   |   67 -
+ .../playground/templates/design-playground.md      |   67 -
+ .../skills/playground/templates/diff-review.md     |  179 -
+ .../playground/templates/document-critique.md      |  171 -
+ .../plugins/plugin-dev/.claude-plugin/plugin.json  |    8 -
+ .../plugins/plugin-dev/LICENSE                     |  202 -
+ .../plugins/plugin-dev/README.md                   |  402 --
+ .../plugins/plugin-dev/agents/agent-creator.md     |  176 -
+ .../plugins/plugin-dev/agents/plugin-validator.md  |  184 -
+ .../plugins/plugin-dev/agents/skill-reviewer.md    |  184 -
+ .../plugins/plugin-dev/commands/create-plugin.md   |  449 --
+ .../plugin-dev/skills/agent-development/SKILL.md   |  415 --
+ .../examples/agent-creation-prompt.md              |  238 -
+ .../examples/complete-agent-examples.md            |  427 --
+ .../references/agent-creation-system-prompt.md     |  207 -
+ .../references/system-prompt-design.md             |  411 --
+ .../references/triggering-examples.md              |  491 --
+ .../agent-development/scripts/validate-agent.sh    |  217 -
+ .../skills/command-development/README.md           |  272 -
+ .../plugin-dev/skills/command-development/SKILL.md |  884 ---
+ .../examples/plugin-commands.md                    |  557 --
+ .../examples/simple-commands.md                    |  504 --
+ .../references/advanced-workflows.md               |  722 --
+ .../references/documentation-patterns.md           |  739 ---
+ .../references/frontmatter-reference.md            |  463 --
+ .../references/interactive-commands.md             |  920 ---
+ .../references/marketplace-considerations.md       |  904 ---
+ .../references/plugin-features-reference.md        |  609 --
+ .../references/testing-strategies.md               |  702 --
+ .../plugin-dev/skills/hook-development/SKILL.md    |  712 --
+ .../hook-development/examples/load-context.sh      |   55 -
+ .../hook-development/examples/validate-bash.sh     |   43 -
+ .../hook-development/examples/validate-write.sh    |   38 -
+ .../skills/hook-development/references/advanced.md |  479 --
+ .../hook-development/references/migration.md       |  369 --
+ .../skills/hook-development/references/patterns.md |  346 -
+ .../skills/hook-development/scripts/README.md      |  164 -
+ .../skills/hook-development/scripts/hook-linter.sh |  153 -
+ .../skills/hook-development/scripts/test-hook.sh   |  252 -
+ .../scripts/validate-hook-schema.sh                |  159 -
+ .../plugin-dev/skills/mcp-integration/SKILL.md     |  554 --
+ .../mcp-integration/examples/http-server.json      |   20 -
+ .../mcp-integration/examples/sse-server.json       |   19 -
+ .../mcp-integration/examples/stdio-server.json     |   26 -
+ .../mcp-integration/references/authentication.md   |  549 --
+ .../mcp-integration/references/server-types.md     |  536 --
+ .../mcp-integration/references/tool-usage.md       |  538 --
+ .../plugin-dev/skills/plugin-settings/SKILL.md     |  544 --
+ .../examples/create-settings-command.md            |   98 -
+ .../plugin-settings/examples/example-settings.md   |  159 -
+ .../plugin-settings/examples/read-settings-hook.sh |   65 -
+ .../references/parsing-techniques.md               |  549 --
+ .../references/real-world-examples.md              |  395 --
+ .../plugin-settings/scripts/parse-frontmatter.sh   |   59 -
+ .../plugin-settings/scripts/validate-settings.sh   |  101 -
+ .../plugin-dev/skills/plugin-structure/README.md   |  109 -
+ .../plugin-dev/skills/plugin-structure/SKILL.md    |  476 --
+ .../plugin-structure/examples/advanced-plugin.md   |  765 ---
+ .../plugin-structure/examples/minimal-plugin.md    |   83 -
+ .../plugin-structure/examples/standard-plugin.md   |  587 --
+ .../references/component-patterns.md               |  567 --
+ .../references/manifest-reference.md               |  552 --
+ .../plugin-dev/skills/skill-development/SKILL.md   |  637 --
+ .../references/skill-creator-original.md           |  209 -
+ .../pr-review-toolkit/.claude-plugin/plugin.json   |    8 -
+ .../plugins/pr-review-toolkit/LICENSE              |  202 -
+ .../plugins/pr-review-toolkit/README.md            |  313 -
+ .../pr-review-toolkit/agents/code-reviewer.md      |   47 -
+ .../pr-review-toolkit/agents/code-simplifier.md    |   88 -
+ .../pr-review-toolkit/agents/comment-analyzer.md   |   70 -
+ .../pr-review-toolkit/agents/pr-test-analyzer.md   |   69 -
+ .../agents/silent-failure-hunter.md                |  130 -
+ .../agents/type-design-analyzer.md                 |  110 -
+ .../pr-review-toolkit/commands/review-pr.md        |  189 -
+ .../plugins/pyright-lsp/LICENSE                    |  202 -
+ .../plugins/pyright-lsp/README.md                  |   31 -
+ .../plugins/ralph-loop/.claude-plugin/plugin.json  |    9 -
+ .../plugins/ralph-loop/LICENSE                     |  202 -
+ .../plugins/ralph-loop/README.md                   |  197 -
+ .../plugins/ralph-loop/commands/cancel-ralph.md    |   18 -
+ .../plugins/ralph-loop/commands/help.md            |  126 -
+ .../plugins/ralph-loop/commands/ralph-loop.md      |   18 -
+ .../plugins/ralph-loop/hooks/hooks.json            |   15 -
+ .../plugins/ralph-loop/hooks/stop-hook.sh          |  191 -
+ .../plugins/ralph-loop/scripts/setup-ralph-loop.sh |  204 -
+ .../plugins/ruby-lsp/LICENSE                       |  202 -
+ .../plugins/ruby-lsp/README.md                     |   31 -
+ .../plugins/rust-analyzer-lsp/LICENSE              |  202 -
+ .../plugins/rust-analyzer-lsp/README.md            |   34 -
+ .../security-guidance/.claude-plugin/plugin.json   |    8 -
+ .../plugins/security-guidance/LICENSE              |  202 -
+ .../plugins/security-guidance/hooks/hooks.json     |   16 -
+ .../hooks/security_reminder_hook.py                |  280 -
+ .../skill-creator/.claude-plugin/plugin.json       |    8 -
+ .../plugins/skill-creator/LICENSE                  |  202 -
+ .../plugins/skill-creator/README.md                |    3 -
+ .../skill-creator/skills/skill-creator/LICENSE.txt |  202 -
+ .../skill-creator/skills/skill-creator/SKILL.md    |  479 --
+ .../skills/skill-creator/agents/analyzer.md        |  274 -
+ .../skills/skill-creator/agents/comparator.md      |  202 -
+ .../skills/skill-creator/agents/grader.md          |  223 -
+ .../skills/skill-creator/assets/eval_review.html   |  146 -
+ .../skill-creator/eval-viewer/generate_review.py   |  471 --
+ .../skills/skill-creator/eval-viewer/viewer.html   | 1325 ----
+ .../skills/skill-creator/references/schemas.md     |  430 --
+ .../skills/skill-creator/scripts/__init__.py       |    0
+ .../skill-creator/scripts/aggregate_benchmark.py   |  401 --
+ .../skill-creator/scripts/generate_report.py       |  326 -
+ .../skill-creator/scripts/improve_description.py   |  248 -
+ .../skills/skill-creator/scripts/package_skill.py  |  136 -
+ .../skills/skill-creator/scripts/quick_validate.py |  103 -
+ .../skills/skill-creator/scripts/run_eval.py       |  310 -
+ .../skills/skill-creator/scripts/run_loop.py       |  332 -
+ .../skills/skill-creator/scripts/utils.py          |   47 -
+ .../plugins/swift-lsp/LICENSE                      |  202 -
+ .../plugins/swift-lsp/README.md                    |   25 -
+ .../plugins/typescript-lsp/LICENSE                 |  202 -
+ .../plugins/typescript-lsp/README.md               |   24 -
+ .../parnmanas/.claude-plugin/marketplace.json      |   29 -
+ .../plugins/marketplaces/parnmanas/.gitignore      |    1 -
+ .../ai-workflow-board/.claude-plugin/plugin.json   |   11 -
+ .../parnmanas/ai-workflow-board/.mcp.json          |   11 -
+ .../claude-self/.claude-plugin/plugin.json         |   11 -
+ .../marketplaces/parnmanas/claude-self/.mcp.json   |    8 -
+ .../parnmanas/claude-self/package-lock.json        | 1142 ----
+ .../parnmanas/claude-self/package.json             |   10 -
+ .../marketplaces/parnmanas/claude-self/server.js   |  146 -
+ .../parnmanas/discord/.claude-plugin/plugin.json   |   11 -
+ .../marketplaces/parnmanas/discord/.mcp.json       |    8 -
+ .../plugins/marketplaces/parnmanas/discord/.npmrc  |    1 -
+ .../marketplaces/parnmanas/discord/ACCESS.md       |  143 -
+ .../plugins/marketplaces/parnmanas/discord/LICENSE |  202 -
+ .../marketplaces/parnmanas/discord/PATCHES.md      |  113 -
+ .../marketplaces/parnmanas/discord/README.md       |  110 -
+ .../marketplaces/parnmanas/discord/bun.lock        |  244 -
+ .../marketplaces/parnmanas/discord/package.json    |   14 -
+ .../marketplaces/parnmanas/discord/server.ts       |  925 ---
+ .../parnmanas/discord/skills/access/SKILL.md       |  146 -
+ .../parnmanas/discord/skills/configure/SKILL.md    |  109 -
+ .../1985f31c-3b1c-4084-a05d-21f399b38be1.jsonl     |   21 -
+ .../19c0d343-3955-4967-b4f4-96123f3a8659.jsonl     |  327 -
+ .../subagents/agent-a409cd0608104b76e.jsonl        |   81 -
+ .../subagents/agent-a409cd0608104b76e.meta.json    |    1 -
+ .../tool-results/b4naivn4z.txt                     |  384 --
+ .../tool-results/bjws04kwv.txt                     | 6951 --------------------
+ .../toolu_01R8yr7WHnTAsmxVydReiCmD.txt             |  252 -
+ .../2b6a337d-8bce-4533-8071-d7b380a74442.jsonl     |  119 -
+ .../subagents/agent-a38d2e35dfb0e9da3.jsonl        |   11 -
+ .../subagents/agent-a38d2e35dfb0e9da3.meta.json    |    1 -
+ .../toolu_01X9aC2FymsEffvSNZqUTXEM.txt             |  252 -
+ .../parnmanas/claude-config/sessions/658217.json   |    1 -
+ .../parnmanas/claude-config/settings.json          |   11 -
+ .../snapshot-bash-1775652957091-x16pm0.sh          |   74 -
+ .../snapshot-bash-1775653212063-endf02.sh          |   74 -
+ .../claude-self/.claude-plugin/plugin.json         |   11 -
+ .../marketplaces/parnmanas/claude-self/.mcp.json   |    8 -
+ .../parnmanas/claude-self/package-lock.json        | 1142 ----
+ .../parnmanas/claude-self/package.json             |   10 -
+ .../marketplaces/parnmanas/claude-self/server.js   |  146 -
+ .../parnmanas/discord/.claude-plugin/plugin.json   |   11 -
+ .../marketplaces/parnmanas/discord/.mcp.json       |    8 -
+ .../plugins/marketplaces/parnmanas/discord/.npmrc  |    1 -
+ .../marketplaces/parnmanas/discord/ACCESS.md       |  143 -
+ .../plugins/marketplaces/parnmanas/discord/LICENSE |  202 -
+ .../marketplaces/parnmanas/discord/PATCHES.md      |  113 -
+ .../marketplaces/parnmanas/discord/README.md       |  110 -
+ .../marketplaces/parnmanas/discord/bun.lock        |  244 -
+ .../marketplaces/parnmanas/discord/package.json    |   14 -
+ .../marketplaces/parnmanas/discord/server.ts       |  925 ---
+ .../parnmanas/discord/skills/access/SKILL.md       |  146 -
+ .../parnmanas/discord/skills/configure/SKILL.md    |  109 -
+ .../plugins/marketplaces/parnmanas/run-claude.sh   |    4 -
+ claude-config/sessions/697727.json                 |    1 -
+ 466 files changed, 448 insertions(+), 97437 deletions(-)

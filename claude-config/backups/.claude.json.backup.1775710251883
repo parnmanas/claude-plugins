@@ -4,7 +4,7 @@
   "autoUpdates": false,
   "tipsHistory": {
     "new-user-warmup": 4,
-    "plan-mode-for-complex-tasks": 7,
+    "plan-mode-for-complex-tasks": 1,
     "terminal-setup": 1,
     "memory-command": 1,
     "theme-command": 1,
@@ -27,9 +27,7 @@
     "agent-flag": 6,
     "powershell-tool-env": 7,
     "desktop-app": 7,
-    "desktop-shortcut": 7,
-    "voice-mode": 7,
-    "feedback-command": 7
+    "desktop-shortcut": 7
   },
   "cachedGrowthBookFeatures": {
     "tengu_editafterwrite_qpl": false,
