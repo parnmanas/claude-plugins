@@ -20,6 +20,14 @@ import { createInterface } from 'readline';
 
 const CONFIG_PATH = join(homedir(), '.claude', 'channels', 'awb', 'config.json');
 
+// Prevent unhandled errors from crashing the process (and Claude CLI with it)
+process.on('uncaughtException', (err) => {
+  process.stderr.write(`[AWB] Uncaught error: ${err.message}\n`);
+});
+process.on('unhandledRejection', (err) => {
+  process.stderr.write(`[AWB] Unhandled rejection: ${err}\n`);
+});
+
 function loadConfig() {
   if (!existsSync(CONFIG_PATH)) {
     return null;
@@ -31,21 +39,22 @@ function loadConfig() {
   }
 }
 
-const config = loadConfig();
+function sendResponse(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\n');
+}
 
-if (!config || !config.url || !config.apiKey) {
-  // Return a helpful error via MCP protocol then exit
-  process.stderr.write(
-    '[AWB] Not configured. Run /awb:setup <server-url> <api-key> to connect.\n'
-  );
-  // Keep stdin open briefly so Claude Code sees the server started
-  // but respond to initialize with an error hint
-  const rl = createInterface({ input: process.stdin });
+function sendError(id, code, message) {
+  sendResponse({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
+}
+
+function handleNotConfigured(rl) {
+  process.stderr.write('[AWB] Not configured. Run /awb:setup <server-url> <api-key> to connect.\n');
+
   rl.on('line', (line) => {
     try {
       const msg = JSON.parse(line);
       if (msg.method === 'initialize') {
-        const resp = {
+        sendResponse({
           jsonrpc: '2.0',
           id: msg.id,
           result: {
@@ -53,36 +62,31 @@ if (!config || !config.url || !config.apiKey) {
             capabilities: { tools: {} },
             serverInfo: { name: 'ai-workflow-board', version: '0.1.0' },
           },
-        };
-        process.stdout.write(JSON.stringify(resp) + '\n');
+        });
       } else if (msg.method === 'tools/list') {
-        const resp = {
-          jsonrpc: '2.0',
-          id: msg.id,
-          result: { tools: [] },
-        };
-        process.stdout.write(JSON.stringify(resp) + '\n');
+        sendResponse({ jsonrpc: '2.0', id: msg.id, result: { tools: [] } });
+      } else if (msg.method === 'notifications/initialized') {
+        // notification — no response needed
       } else if (msg.id !== undefined) {
-        const resp = {
-          jsonrpc: '2.0',
-          id: msg.id,
-          error: { code: -32000, message: 'AWB not configured. Run /awb:setup <server-url> <api-key>' },
-        };
-        process.stdout.write(JSON.stringify(resp) + '\n');
+        sendError(msg.id, -32000, 'AWB not configured. Run /awb:setup <server-url> <api-key>');
       }
     } catch {}
   });
-} else {
-  // Configured — proxy stdio to remote HTTP MCP server
+}
+
+function handleProxy(rl, config) {
   const mcpUrl = config.url.replace(/\/$/, '') + '/mcp';
   let sessionId = null;
 
-  const rl = createInterface({ input: process.stdin });
-
   rl.on('line', async (line) => {
+    let msg;
     try {
-      const msg = JSON.parse(line);
+      msg = JSON.parse(line);
+    } catch {
+      return; // malformed JSON, ignore
+    }
 
+    try {
       const headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',
@@ -96,6 +100,7 @@ if (!config || !config.url || !config.apiKey) {
         method: 'POST',
         headers,
         body: JSON.stringify(msg),
+        signal: AbortSignal.timeout(30000),
       });
 
       // Capture session ID from first response
@@ -105,7 +110,6 @@ if (!config || !config.url || !config.apiKey) {
       const contentType = resp.headers.get('content-type') || '';
 
       if (contentType.includes('text/event-stream')) {
-        // SSE response — parse events and forward
         const text = await resp.text();
         for (const chunk of text.split('\n')) {
           if (chunk.startsWith('data: ')) {
@@ -116,7 +120,6 @@ if (!config || !config.url || !config.apiKey) {
           }
         }
       } else {
-        // JSON response
         const body = await resp.text();
         if (body.trim()) {
           process.stdout.write(body + '\n');
@@ -124,6 +127,15 @@ if (!config || !config.url || !config.apiKey) {
       }
     } catch (err) {
       process.stderr.write(`[AWB] Proxy error: ${err.message}\n`);
+
+      // Return MCP error response so Claude CLI doesn't hang
+      if (msg.id !== undefined) {
+        const errMsg = err.cause?.code === 'ECONNREFUSED'
+          ? `AWB server unreachable at ${config.url}. Is the server running?`
+          : `AWB proxy error: ${err.message}`;
+        sendError(msg.id, -32000, errMsg);
+      }
+      // If it was a notification (no id), just log and continue
     }
   });
 
@@ -131,5 +143,16 @@ if (!config || !config.url || !config.apiKey) {
     process.exit(0);
   });
 
-  process.stderr.write(`[AWB] Connected to ${config.url}\n`);
+  process.stderr.write(`[AWB] Proxy ready (server: ${config.url})\n`);
+}
+
+// ─── Main ───────────────────────────────────────────────────
+
+const config = loadConfig();
+const rl = createInterface({ input: process.stdin });
+
+if (!config || !config.url || !config.apiKey) {
+  handleNotConfigured(rl);
+} else {
+  handleProxy(rl, config);
 }
