@@ -1,11 +1,8 @@
 {
   "mcpServers": {
     "ai-workflow-board": {
-      "type": "http",
-      "url": "https://awb.beconngames.com:7700/mcp",
-      "headers": {
-        "Authorization": "Bearer awb_f448bc3cfcce08fa04000ad826bbde8644c0dff3"
-      }
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/proxy.mjs"]
     }
   }
 }
