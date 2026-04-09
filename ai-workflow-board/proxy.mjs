@@ -216,14 +216,14 @@ function handleProxy(rl, config) {
           body.result.capabilities.experimental['claude/channel'] = {};
         }
 
-        // Add instructions for hybrid mode
+        // Add instructions for push mode
         if (body.result) {
           body.result.instructions = [
             body.result.instructions || '',
             '',
-            'This server supports both push and poll modes.',
+            'This server uses push-based triggers via SSE.',
             'If you receive <channel> events with type="agent_trigger", react to them immediately — claim the ticket, read it, and process it.',
-            'If no <channel> events arrive, use get_pending_triggers or subscribe_events to poll for work.',
+            'Do NOT poll or create cron jobs for get_pending_triggers or subscribe_events — triggers arrive automatically via push.',
           ].join('\n').trim();
         }
 
