@@ -34,9 +34,11 @@ const RECONNECT_MAX_MS = 30000;
 const REQUEST_TIMEOUT_MS = 30000;
 
 const CHANNEL_INSTRUCTIONS = [
-  'This server uses push-based triggers via SSE.',
-  'If you receive <channel> events with type="agent_trigger", react to them immediately — claim the ticket, read it, and process it.',
-  'Do NOT poll or create cron jobs for get_pending_triggers or subscribe_events — triggers arrive automatically via push.',
+  'This server uses push-based event delivery via SSE.',
+  'You will receive <channel> events for all ticket activity:',
+  '  - type="agent_trigger": A trigger assigned to you — claim the ticket, read it, and process it.',
+  '  - type="board_update": A ticket was updated (comment added, status changed, field edited, etc.).',
+  'Do NOT poll or create cron jobs for get_pending_triggers or subscribe_events — events arrive automatically via push.',
 ].join('\n');
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -82,13 +84,13 @@ function loadConfig() {
 // ─── SSE Event Stream ─────────────────────────────────────
 
 /**
- * Connect to AWB's SSE /api/events/stream and forward agent_trigger events
+ * Connect to AWB's SSE /api/events/stream and forward ticket events
  * as claude/channel notifications. Reconnects with exponential backoff.
  *
- * AWB SSE format (from events.controller.ts):
- *   event: agent_trigger
- *   data: {"event_type":"agent_trigger","ticket_id":"...","action":"assignee",
- *          "field_changed":"<trigger_id>","actor_name":"<agent_id>","timestamp":"..."}
+ * AWB SSE event types (from events.controller.ts):
+ *   - board_update:  ticket/comment CRUD (entity_type, action, field_changed, actor_name)
+ *   - agent_trigger: trigger assigned to agent (role, trigger_id, agent_id)
+ *   - agent_typing:  typing indicator (ignored by proxy)
  */
 class EventStream {
   #url;
@@ -162,6 +164,8 @@ class EventStream {
           const data = line.slice(6).trim();
           if (data && eventType === 'agent_trigger') {
             this.#handleTrigger(data);
+          } else if (data && eventType === 'board_update') {
+            this.#handleBoardUpdate(data);
           }
           // Reset after processing data (SSE spec: dispatch on blank line,
           // but we process eagerly since each event: + data: pair is atomic)
@@ -193,6 +197,30 @@ class EventStream {
       log(`Trigger forwarded: ticket=${ev.ticket_id} role=${ev.action}`);
     } catch (err) {
       log(`Failed to parse trigger: ${err.message}`);
+    }
+  }
+
+  #handleBoardUpdate(raw) {
+    try {
+      const ev = JSON.parse(raw);
+      // entity_type: 'ticket' | 'comment' | 'child_ticket' etc.
+      // action: 'created' | 'updated' | 'moved' | 'deleted' | 'status_changed'
+      const label = ev.entity_type === 'comment' ? 'Comment' : 'Update';
+      sendChannelEvent(
+        `[AWB ${label}] ticket=${ev.ticket_id} ${ev.entity_type}.${ev.action}${ev.field_changed ? ` field=${ev.field_changed}` : ''} by=${ev.actor_name}`,
+        {
+          type: 'board_update',
+          ticket_id: ev.ticket_id || '',
+          entity_type: ev.entity_type || '',
+          action: ev.action || '',
+          field_changed: ev.field_changed || '',
+          actor_name: ev.actor_name || '',
+          timestamp: ev.timestamp || new Date().toISOString(),
+        },
+      );
+      log(`Board update forwarded: ticket=${ev.ticket_id} ${ev.entity_type}.${ev.action}`);
+    } catch (err) {
+      log(`Failed to parse board_update: ${err.message}`);
     }
   }
 
