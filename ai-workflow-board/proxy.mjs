@@ -312,6 +312,8 @@ class EventStream {
             this.#handleTrigger(data);
           } else if (data && eventType === 'board_update') {
             this.#handleBoardUpdate(data);
+          } else if (data && eventType === 'chat_request') {
+            this.#handleChatRequest(data);
           }
           // Reset after processing data (SSE spec: dispatch on blank line,
           // but we process eagerly since each event: + data: pair is atomic)
@@ -402,6 +404,73 @@ class EventStream {
       },
     );
     log(`Trigger forwarded (legacy path): ticket=${ev.ticket_id} role=${ev.action}`);
+  }
+
+  async #handleChatRequest(raw) {
+    let ev;
+    try {
+      ev = JSON.parse(raw);
+    } catch (err) {
+      log(`Failed to parse chat_request: ${err.message}`);
+      return;
+    }
+
+    // ASYMMETRY NOTICE: chat_request ships envelope-native (Plan 04-01), so fields
+    // live under ev.payload.*  —  NOT at the top level like agent_trigger. This is
+    // the counterpart to the flatten-on-emit path in #handleTrigger above. See
+    // 01-02-SUMMARY.md:203 and 04-01-SUMMARY.md for the rationale.
+    const payload = ev.payload || {};
+    const delegationEnabled = this.#config?.delegation?.enabled === true;
+    if (!delegationEnabled) {
+      // Phase 2 emitted chat_request with no consumer; when delegation is off, the
+      // proxy has nothing meaningful to do with the event. There is no legacy
+      // fallback (chat_request is a Phase 4 delegation-only event type).
+      log(`chat_request received but delegation disabled — no-op`);
+      return;
+    }
+    if (!this.#subagentManager || !this.#subagentManager.canSpawn()) {
+      log(`chat_request received but subagent manager unavailable or at cap — no-op`);
+      return;
+    }
+
+    const rolePrompt = payload.role_prompt || '';
+    const history = Array.isArray(payload.history) ? payload.history : [];
+    const newMessage = payload.new_message || '';
+    const taskText = composeChatPrompt(rolePrompt, history, newMessage);
+
+    try {
+      const result = await this.#subagentManager.spawn({
+        kind: 'chat',
+        taskText,
+        rolePrompt,
+        // Dedup key: agent + user + ticket + timestamp — protects against SSE reconnect duplicates
+        chatRequestId: payload.user_id
+          ? `${payload.agent_id}:${payload.user_id}:${payload.ticket_id || 'global'}:${ev.timestamp || ''}`
+          : undefined,
+        ticketId: payload.ticket_id || '',
+        agentId: payload.agent_id || '',
+      });
+
+      if (result.spawned) {
+        sendChannelEvent(
+          `[AWB Chat Subagent] Dispatched agent=${payload.agent_id} user=${payload.user_id} pid=${result.pid}`,
+          {
+            type: 'subagent_dispatched',
+            subagent_kind: 'chat',
+            agent_id: payload.agent_id || '',
+            user_id: payload.user_id || '',
+            ticket_id: payload.ticket_id || '',
+            pid: result.pid,
+            timestamp: ev.timestamp || new Date().toISOString(),
+          },
+        );
+        log(`Chat request dispatched to subagent: agent=${payload.agent_id} pid=${result.pid}`);
+      } else {
+        log(`Chat subagent spawn declined (${result.reason})`);
+      }
+    } catch (err) {
+      log(`Chat delegation path failed: ${err.message}`);
+    }
   }
 
   #handleBoardUpdate(raw) {
