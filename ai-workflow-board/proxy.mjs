@@ -1056,7 +1056,15 @@ if (isDirectExecution) {
   }
 }
 
-export { SubagentManager, DELEGATION_DEFAULTS, loadConfig };
+export {
+  SubagentManager,
+  DELEGATION_DEFAULTS,
+  loadConfig,
+  EventStream,
+  fetchTicketContext,
+  composeTriggerPrompt,
+  composeChatPrompt,
+};
 
 // Test-only seams — only exported when AWB_TEST_MODE is set. Plan 04-04 integration
 // tests use these to invoke the private #handleTrigger / #handleChatRequest handlers
