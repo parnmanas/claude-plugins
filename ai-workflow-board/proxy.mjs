@@ -502,6 +502,11 @@ class EventStream {
     setTimeout(() => this.#connect(), this.#retryDelay);
     this.#retryDelay = Math.min(this.#retryDelay * 1.5, RECONNECT_MAX_MS);
   }
+
+  // Test-only accessor — only exposed when AWB_TEST_MODE is set. Lets Plan 04-04
+  // integration tests invoke the private handlers without opening a real SSE stream.
+  _testDispatchTrigger(raw) { return this.#handleTrigger(raw); }
+  _testDispatchChatRequest(raw) { return this.#handleChatRequest(raw); }
 }
 
 // ─── Subagent Manager (Phase 4 D-55..D-75) ────────────────
@@ -928,12 +933,41 @@ function runProxy(rl, config) {
   let sessionId = null;
   let eventStream = null;
 
-  // Phase 4 Plan 04-02: instantiate SubagentManager. Behaviorally inert until Plan 04-03
-  // wires #handleTrigger / #handleChatRequest consumers. The signal handlers below ensure
-  // orphan cleanup on proxy shutdown regardless of whether consumers are live.
+  // Phase 4 Plan 04-02: instantiate SubagentManager. Plan 04-03 now wires #handleTrigger
+  // and #handleChatRequest consumers + the onExit completion notification below.
   const subagentManager = new SubagentManager(config);
   // Fire-and-forget init; log on failure. init() is idempotent and defers TTL sweep to setInterval.
   subagentManager.init().catch((err) => log(`SubagentManager init failed: ${err.message}`));
+
+  // Phase 4 D-69: completion notification. Fires for every subagent exit
+  // (normal completion, non-zero failure, or TTL SIGTERM/SIGKILL timeout).
+  // SubagentManager invokes this inside its exit handler — see Plan 04-02 #wireExitHandler.
+  subagentManager.onExit = ({ pid, record, code, signal, durationSec }) => {
+    const label = record.kind === 'chat' ? 'Chat Subagent' : 'Subagent';
+    let msg;
+    if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+      msg = `[AWB ${label}] ticket=${record.ticket_id || '-'} TIMED OUT after ${durationSec}s`;
+    } else if (code === 0) {
+      msg = `[AWB ${label}] ticket=${record.ticket_id || '-'} completed (duration=${durationSec}s)`;
+    } else {
+      msg = `[AWB ${label}] ticket=${record.ticket_id || '-'} FAILED (exit=${code}, duration=${durationSec}s, see proxy logs)`;
+    }
+    try {
+      sendChannelEvent(msg, {
+        type: 'subagent_complete',
+        subagent_kind: record.kind,
+        ticket_id: record.ticket_id || '',
+        trigger_id: record.trigger_id || '',
+        agent_id: record.agent_id || '',
+        pid,
+        exit_code: code ?? null,
+        signal: signal ?? null,
+        duration_sec: durationSec,
+      });
+    } catch (err) {
+      log(`Completion notification failed: ${err.message}`);
+    }
+  };
 
   const shutdownHandler = async (signal) => {
     log(`Proxy received ${signal} — terminating subagents`);
@@ -965,7 +999,7 @@ function runProxy(rl, config) {
     // Start SSE stream AFTER handshake completes (Claude is ready to receive)
     if (msg.method === 'notifications/initialized') {
       if (!eventStream) {
-        eventStream = new EventStream(config);
+        eventStream = new EventStream(config, subagentManager);
         eventStream.start();
         log('SSE event stream started (post-handshake)');
       }
@@ -1023,3 +1057,19 @@ if (isDirectExecution) {
 }
 
 export { SubagentManager, DELEGATION_DEFAULTS, loadConfig };
+
+// Test-only seams — only exported when AWB_TEST_MODE is set. Plan 04-04 integration
+// tests use these to invoke the private #handleTrigger / #handleChatRequest handlers
+// without opening a real SSE stream. Each seam creates a transient EventStream bound
+// to the provided (config, subagentManager) tuple and dispatches the raw payload.
+export const _testDispatchTrigger =
+  process.env.AWB_TEST_MODE === 'true'
+    ? (config, subagentManager, raw) =>
+        new EventStream(config, subagentManager)._testDispatchTrigger(raw)
+    : undefined;
+
+export const _testDispatchChatRequest =
+  process.env.AWB_TEST_MODE === 'true'
+    ? (config, subagentManager, raw) =>
+        new EventStream(config, subagentManager)._testDispatchChatRequest(raw)
+    : undefined;
