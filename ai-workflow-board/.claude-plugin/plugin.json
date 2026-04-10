@@ -1,7 +1,7 @@
 {
   "name": "awb",
   "description": "AI Workflow Board - ticket management, boards, agents, and workspace tools via MCP. Use /awb:setup to configure connection.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "keywords": [
     "workflow",
     "board",
