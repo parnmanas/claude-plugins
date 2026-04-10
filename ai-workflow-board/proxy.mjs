@@ -239,9 +239,13 @@ class EventStream {
   #retryDelay = RECONNECT_INITIAL_MS;
   #abortController = null;
   #stopped = false;
+  #config;                    // Phase 4 Plan 04-03 — delegation branch decisions
+  #subagentManager;           // Phase 4 Plan 04-03 — spawn target (may be null)
 
-  constructor(config) {
+  constructor(config, subagentManager = null) {
     this.#url = `${config.url.replace(/\/$/, '')}/api/events/stream?token=${encodeURIComponent(config.apiKey)}`;
+    this.#config = config;
+    this.#subagentManager = subagentManager;
   }
 
   start() {
@@ -320,26 +324,84 @@ class EventStream {
     }
   }
 
-  #handleTrigger(raw) {
+  async #handleTrigger(raw) {
+    let ev;
     try {
-      const ev = JSON.parse(raw);
-      // Map AWB event fields → channel notification meta
-      // AWB events.controller uses: action=role, field_changed=trigger_id, actor_name=agent_id
-      sendChannelEvent(
-        `[AWB Trigger] ticket=${ev.ticket_id} role=${ev.action} trigger=${ev.field_changed}`,
-        {
-          type: 'agent_trigger',
-          ticket_id: ev.ticket_id || '',
-          trigger_id: ev.field_changed || '',
-          agent_id: ev.actor_name || '',
-          role: ev.action || '',
-          timestamp: ev.timestamp || new Date().toISOString(),
-        },
-      );
-      log(`Trigger forwarded: ticket=${ev.ticket_id} role=${ev.action}`);
+      ev = JSON.parse(raw);
     } catch (err) {
       log(`Failed to parse trigger: ${err.message}`);
+      return;
     }
+
+    // Phase 1 flatten-on-emit asymmetry: agent_trigger reads TOP-LEVEL fields
+    // (ev.role_prompt, ev.ticket_prompt, ev.ticket_id, ev.field_changed, ev.actor_name).
+    // In contrast, chat_request is envelope-native and reads ev.payload.* — see
+    // #handleChatRequest for the other side of this asymmetry.
+
+    // D-59: delegation branch — check config flag AND runtime capacity before choosing path
+    const delegationEnabled = this.#config?.delegation?.enabled === true;
+    const canDelegate = delegationEnabled && this.#subagentManager && this.#subagentManager.canSpawn();
+
+    if (canDelegate) {
+      try {
+        // D-60: fetch fresh ticket context (best-effort; null → composeTriggerPrompt handles the null case)
+        const ticket = await fetchTicketContext(this.#config, ev.ticket_id);
+        // D-61: role_prompt and ticket_prompt are at TOP LEVEL of the flatten-on-emit shape
+        const rolePrompt = ev.role_prompt || '';
+        const ticketPrompt = ev.ticket_prompt || '';
+        const taskText = composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, ev.ticket_id);
+
+        const result = await this.#subagentManager.spawn({
+          kind: 'trigger',
+          taskText,
+          rolePrompt,
+          triggerId: ev.field_changed || '',
+          ticketId: ev.ticket_id || '',
+          agentId: ev.actor_name || '',
+        });
+
+        if (result.spawned) {
+          // Dispatch notification (D-59): lightweight "dispatched" line, NOT the full trigger payload
+          sendChannelEvent(
+            `[AWB Subagent] Dispatched ticket=${ev.ticket_id} trigger=${ev.field_changed} pid=${result.pid}`,
+            {
+              type: 'subagent_dispatched',
+              subagent_kind: 'trigger',
+              ticket_id: ev.ticket_id || '',
+              trigger_id: ev.field_changed || '',
+              agent_id: ev.actor_name || '',
+              pid: result.pid,
+              timestamp: ev.timestamp || new Date().toISOString(),
+            },
+          );
+          log(`Trigger dispatched to subagent: ticket=${ev.ticket_id} pid=${result.pid}`);
+          return;
+        }
+        // spawn() returned {spawned: false, reason} — log and fall through to legacy path
+        log(`Subagent spawn declined (${result.reason}), falling back to main session forward`);
+      } catch (err) {
+        log(`Delegation path failed: ${err.message}, falling back to main session forward`);
+        // fall through to legacy path
+      }
+    }
+
+    // ── Legacy Phase 1 pass-through path ─────────────────────────────
+    // Runs when: delegation disabled OR subagentManager missing OR canSpawn false
+    // OR spawn declined OR delegation path threw. Preserves exact Phase 1 behavior
+    // for users who set delegation.enabled: false (or who have no delegation config).
+    // AWB events.controller uses: action=role, field_changed=trigger_id, actor_name=agent_id
+    sendChannelEvent(
+      `[AWB Trigger] ticket=${ev.ticket_id} role=${ev.action} trigger=${ev.field_changed}`,
+      {
+        type: 'agent_trigger',
+        ticket_id: ev.ticket_id || '',
+        trigger_id: ev.field_changed || '',
+        agent_id: ev.actor_name || '',
+        role: ev.action || '',
+        timestamp: ev.timestamp || new Date().toISOString(),
+      },
+    );
+    log(`Trigger forwarded (legacy path): ticket=${ev.ticket_id} role=${ev.action}`);
   }
 
   #handleBoardUpdate(raw) {
