@@ -31,9 +31,14 @@ const CONFIG_PATH = join(
   process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
   'channels', 'awb', 'config.json',
 );
+const AGENT_PATH = join(
+  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+  'channels', 'awb', 'agent.json',
+);
 const RECONNECT_INITIAL_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
 const REQUEST_TIMEOUT_MS = 30000;
+const HEARTBEAT_INTERVAL_MS = 30_000;  // Phase 3 D-52 presence — must be < sweep's 90s threshold
 
 const CHANNEL_INSTRUCTIONS = [
   'This server uses push-based event delivery via SSE.',
@@ -103,6 +108,21 @@ function loadConfig() {
     // unless Plan 04-03 consumers go live).
     raw.delegation = { ...DELEGATION_DEFAULTS, ...(raw.delegation || {}) };
     return raw;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Load cached agent identity from ~/.claude/channels/awb/agent.json.
+ * Written by /ai-workflow-board:setup. Used by PresenceHeartbeat to know
+ * which agent_id to ping. Returns null if the file is missing or invalid.
+ */
+function loadAgentInfo() {
+  if (!existsSync(AGENT_PATH)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(AGENT_PATH, 'utf8'));
+    return raw && typeof raw.agent_id === 'string' ? raw : null;
   } catch {
     return null;
   }
@@ -221,6 +241,129 @@ function composeChatPrompt(rolePrompt, history, newMessage) {
   lines.push('- Reply ONLY via the mcp__awb__send_chat_message MCP tool.');
   lines.push('- Do NOT print your reply to stdout — it must go through send_chat_message so the user sees it in the web UI.');
   return lines.join('\n');
+}
+
+// ─── Presence Heartbeat (Phase 3 D-52 / D-53) ─────────────
+
+/**
+ * Periodically call the `ping` MCP tool against AWB so this agent stays
+ * marked online in the dashboard. Without this, nothing on the Claude side
+ * ever touches `last_seen_at`, and the server's 90-second sweep would
+ * immediately mark us offline.
+ *
+ * Mechanism: open a short-lived MCP session (initialize → tools/call ping)
+ * every HEARTBEAT_INTERVAL_MS. The session is torn down after each ping —
+ * this is cheaper than keeping a persistent session alive across the whole
+ * proxy lifetime and avoids Mcp-Session-Id contention with the Claude CLI's
+ * own session (which flows through stdio on this same proxy).
+ *
+ * Fires once immediately on start() so the dashboard reflects online
+ * status within the first second of the proxy's lifetime instead of waiting
+ * 30s for the first tick.
+ */
+class PresenceHeartbeat {
+  #config;
+  #agentId;
+  #timer = null;
+  #stopped = false;
+
+  constructor(config, agentId) {
+    this.#config = config;
+    this.#agentId = agentId;
+  }
+
+  start() {
+    if (!this.#agentId) {
+      log('Presence heartbeat skipped — agent_id not in agent.json (run /ai-workflow-board:setup)');
+      return;
+    }
+    this.#stopped = false;
+    // Fire once immediately, then on interval
+    this.#ping().catch((err) => log(`Presence ping (initial) failed: ${err.message}`));
+    this.#timer = setInterval(() => {
+      this.#ping().catch((err) => log(`Presence ping failed: ${err.message}`));
+    }, HEARTBEAT_INTERVAL_MS);
+    this.#timer.unref?.();
+    log(`Presence heartbeat started (agent=${this.#agentId.slice(0, 8)} interval=${HEARTBEAT_INTERVAL_MS / 1000}s)`);
+  }
+
+  stop() {
+    this.#stopped = true;
+    if (this.#timer) {
+      clearInterval(this.#timer);
+      this.#timer = null;
+    }
+  }
+
+  async #ping() {
+    if (this.#stopped) return;
+    const base = this.#config.url.replace(/\/$/, '');
+    const url = `${base}/mcp`;
+    const headers = {
+      Authorization: `Bearer ${this.#config.apiKey}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+    };
+
+    // Step 1: initialize to get Mcp-Session-Id
+    const initResp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'awb-presence-heartbeat', version: '1.0.0' },
+        },
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!initResp.ok) {
+      throw new Error(`initialize HTTP ${initResp.status}`);
+    }
+    const sid = initResp.headers.get('mcp-session-id');
+    if (!sid) throw new Error('initialize did not return Mcp-Session-Id');
+    // Drain response body so the connection releases
+    await initResp.text().catch(() => null);
+
+    const sessionHeaders = { ...headers, 'Mcp-Session-Id': sid };
+
+    // Step 2: notifications/initialized (required by MCP spec before tool calls)
+    await fetch(url, {
+      method: 'POST',
+      headers: sessionHeaders,
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    }).then((r) => r.text().catch(() => null));
+
+    // Step 3: tools/call ping
+    const pingResp = await fetch(url, {
+      method: 'POST',
+      headers: sessionHeaders,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'ping',
+          arguments: { agent_id: this.#agentId },
+        },
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!pingResp.ok) {
+      throw new Error(`tools/call ping HTTP ${pingResp.status}`);
+    }
+    await pingResp.text().catch(() => null);
+
+    // Step 4: DELETE session to free server-side state
+    fetch(url, { method: 'DELETE', headers: sessionHeaders, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+      .then((r) => r.text().catch(() => null))
+      .catch(() => { /* ignore — server handles expired sessions via TTL */ });
+  }
 }
 
 // ─── SSE Event Stream ─────────────────────────────────────
@@ -933,6 +1076,12 @@ function runProxy(rl, config) {
   let sessionId = null;
   let eventStream = null;
 
+  // Phase 3 D-52: presence heartbeat. Reads agent.json (written by /ai-workflow-board:setup)
+  // to learn our agent_id, then pings the MCP ping tool every 30s so the dashboard keeps
+  // this agent marked online. No-op if agent.json is missing — nothing pings, nothing breaks.
+  const agentInfo = loadAgentInfo();
+  const presenceHeartbeat = new PresenceHeartbeat(config, agentInfo?.agent_id);
+
   // Phase 4 Plan 04-02: instantiate SubagentManager. Plan 04-03 now wires #handleTrigger
   // and #handleChatRequest consumers + the onExit completion notification below.
   const subagentManager = new SubagentManager(config);
@@ -1001,6 +1150,7 @@ function runProxy(rl, config) {
       if (!eventStream) {
         eventStream = new EventStream(config, subagentManager);
         eventStream.start();
+        presenceHeartbeat.start();
         log('SSE event stream started (post-handshake)');
       }
       return;
@@ -1032,6 +1182,7 @@ function runProxy(rl, config) {
 
   rl.on('close', async () => {
     eventStream?.stop();
+    presenceHeartbeat.stop();
     try { await subagentManager.stop(); } catch { /* ignore */ }
     process.exit(0);
   });
