@@ -116,14 +116,97 @@ function loadConfig() {
 /**
  * Load cached agent identity from ~/.claude/channels/awb/agent.json.
  * Written by /ai-workflow-board:setup. Used by PresenceHeartbeat to know
- * which agent_id to ping. Returns null if the file is missing or invalid.
+ * which agent_id to ping. Returns the parsed object (even if agent_id is null)
+ * or null if the file is missing/unparseable.
  */
 function loadAgentInfo() {
   if (!existsSync(AGENT_PATH)) return null;
   try {
     const raw = JSON.parse(readFileSync(AGENT_PATH, 'utf8'));
-    return raw && typeof raw.agent_id === 'string' ? raw : null;
+    return raw && typeof raw === 'object' ? raw : null;
   } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve agent_id via MCP whoami tool call if agent.json exists but has null agent_id.
+ * Writes the resolved UUID back to agent.json so subsequent proxy restarts skip this step.
+ */
+async function resolveAgentId(config) {
+  const info = loadAgentInfo();
+  if (!info) return null; // no agent.json at all
+  if (typeof info.agent_id === 'string' && info.agent_id) return info.agent_id; // already resolved
+
+  log('agent_id is null — resolving via MCP whoami...');
+  const base = config.url.replace(/\/$/, '');
+  const url = `${base}/mcp`;
+  const headers = {
+    Authorization: `Bearer ${config.apiKey}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+  };
+
+  try {
+    // Step 1: initialize
+    const initResp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: { experimental: { 'awb/schemaVersion': { version: 2 } } },
+          clientInfo: { name: 'awb-agent-resolve', version: '1.0.0' },
+        },
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!initResp.ok) throw new Error(`initialize HTTP ${initResp.status}`);
+    const sid = initResp.headers.get('mcp-session-id');
+    if (!sid) throw new Error('initialize did not return Mcp-Session-Id');
+    await initResp.text().catch(() => null);
+
+    const sessionHeaders = { ...headers, 'Mcp-Session-Id': sid };
+
+    // Step 2: notifications/initialized
+    await fetch(url, {
+      method: 'POST', headers: sessionHeaders,
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    }).then((r) => r.text().catch(() => null));
+
+    // Step 3: tools/call whoami
+    const whoamiResp = await fetch(url, {
+      method: 'POST', headers: sessionHeaders,
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 2, method: 'tools/call',
+        params: { name: 'whoami', arguments: {} },
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!whoamiResp.ok) throw new Error(`whoami HTTP ${whoamiResp.status}`);
+    const whoamiBody = await whoamiResp.json();
+
+    // Step 4: DELETE session
+    fetch(url, { method: 'DELETE', headers: sessionHeaders, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+      .then((r) => r.text().catch(() => null)).catch(() => {});
+
+    // Extract agent_id from whoami response
+    const content = whoamiBody?.result?.content;
+    if (!Array.isArray(content) || !content[0]?.text) throw new Error('unexpected whoami response shape');
+    const parsed = JSON.parse(content[0].text);
+    const agentId = parsed?.agent_id;
+    if (!agentId || typeof agentId !== 'string') throw new Error(`whoami returned no agent_id: ${content[0].text}`);
+
+    // Write back to agent.json
+    info.agent_id = agentId;
+    info._note = `agent_id resolved automatically by proxy at ${new Date().toISOString()}`;
+    await fsp.writeFile(AGENT_PATH, JSON.stringify(info, null, 2) + '\n', 'utf8');
+    log(`agent_id resolved: ${agentId.slice(0, 8)}...`);
+    return agentId;
+  } catch (err) {
+    log(`agent_id resolve failed: ${err.message}`);
     return null;
   }
 }
@@ -1113,11 +1196,12 @@ function runProxy(rl, config) {
   let sessionId = null;
   let eventStream = null;
 
-  // Phase 3 D-52: presence heartbeat. Reads agent.json (written by /ai-workflow-board:setup)
-  // to learn our agent_id, then pings the MCP ping tool every 30s so the dashboard keeps
-  // this agent marked online. No-op if agent.json is missing — nothing pings, nothing breaks.
-  const agentInfo = loadAgentInfo();
-  const presenceHeartbeat = new PresenceHeartbeat(config, agentInfo?.agent_id);
+  // Phase 3 D-52: presence heartbeat. Resolves agent_id from agent.json (or via MCP whoami
+  // if null), then pings every 30s so the dashboard keeps this agent marked online.
+  // No-op if agent.json is missing — nothing pings, nothing breaks.
+  let resolvedAgentId = null;
+  const agentIdReady = resolveAgentId(config).then((id) => { resolvedAgentId = id; return id; });
+  const presenceHeartbeat = { _real: null };
 
   // Phase 4 Plan 04-02: instantiate SubagentManager. Plan 04-03 now wires #handleTrigger
   // and #handleChatRequest consumers + the onExit completion notification below.
@@ -1157,6 +1241,8 @@ function runProxy(rl, config) {
 
   const shutdownHandler = async (signal) => {
     log(`Proxy received ${signal} — terminating subagents`);
+    presenceHeartbeat._real?.stop();
+    eventStream?.stop();
     try { await subagentManager.stop(); } catch (err) { log(`shutdown: ${err.message}`); }
     process.exit(0);
   };
@@ -1194,7 +1280,11 @@ function runProxy(rl, config) {
       if (!eventStream) {
         eventStream = new EventStream(config, subagentManager);
         eventStream.start();
-        presenceHeartbeat.start();
+        // Wait for agent_id resolution, then start heartbeat
+        agentIdReady.then((agentId) => {
+          presenceHeartbeat._real = new PresenceHeartbeat(config, agentId);
+          presenceHeartbeat._real.start();
+        });
         log('SSE event stream started (post-handshake)');
       }
       return;
@@ -1227,7 +1317,7 @@ function runProxy(rl, config) {
   rl.on('close', async () => {
     log('stdin closed — shutting down proxy');
     eventStream?.stop();
-    presenceHeartbeat.stop();
+    presenceHeartbeat._real?.stop();
     try { await subagentManager.stop(); } catch { /* ignore */ }
     process.exit(0);
   });
