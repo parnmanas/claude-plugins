@@ -326,6 +326,66 @@ function composeChatPrompt(rolePrompt, history, newMessage) {
   return lines.join('\n');
 }
 
+/**
+ * Fetch recent chat room messages from AWB REST API.
+ * Returns array of {sender_type, sender_name, content, created_at} or empty on failure.
+ */
+async function fetchChatRoomHistory(config, roomId, limit = 20) {
+  if (!roomId) return [];
+  try {
+    const url = `${config.url.replace(/\/$/, '')}/api/chat-rooms/${encodeURIComponent(roomId)}/messages?limit=${limit}`;
+    const resp = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      log(`Chat room history fetch failed: ${resp.status} (room=${roomId})`);
+      return [];
+    }
+    const data = await resp.json();
+    return Array.isArray(data) ? data : (data.messages || []);
+  } catch (err) {
+    log(`Chat room history fetch error: ${err.message} (room=${roomId})`);
+    return [];
+  }
+}
+
+/**
+ * Compose the task text for a chat room message subagent. Pure function.
+ * `history` is recent messages (chronological); `newMessage` is the incoming message.
+ * role_prompt is injected via --append-system-prompt (not here).
+ */
+function composeChatRoomPrompt(roomId, history, newMessage) {
+  const lines = [];
+  lines.push('You are an AWB chat subagent responding to a user message in a chat room.');
+  lines.push('');
+  lines.push(`Room ID: ${roomId}`);
+  lines.push('');
+  if (Array.isArray(history) && history.length > 0) {
+    lines.push('Conversation history (oldest first):');
+    for (const h of history.slice(-20)) {
+      const who = h.sender_type === 'agent' ? 'Agent' : 'User';
+      const name = h.sender_name || h.sender_id || 'unknown';
+      const when = h.created_at || '';
+      const content = (h.content || '').slice(0, 2000);
+      lines.push(`- [${when}] ${who} (${name}): ${content}`);
+    }
+    lines.push('');
+  }
+  lines.push('Latest user message:');
+  lines.push(newMessage.content || '');
+  lines.push(`From: ${newMessage.sender_name || newMessage.sender_id || 'unknown'}`);
+  lines.push('');
+  lines.push('Instructions:');
+  lines.push('- Compose a helpful reply using your knowledge and the conversation context.');
+  lines.push(`- Reply ONLY via the mcp__awb__send_chat_room_message MCP tool (room_id: "${roomId}").`);
+  lines.push('- Do NOT print your reply to stdout — it must go through send_chat_room_message so the user sees it in the web UI.');
+  return lines.join('\n');
+}
+
 // ─── Presence Heartbeat (Phase 3 D-52 / D-53) ─────────────
 
 /**
@@ -738,26 +798,82 @@ class EventStream {
     }
   }
 
-  #handleChatRoomMessage(raw) {
+  async #handleChatRoomMessage(raw) {
+    let ev;
     try {
-      const ev = JSON.parse(raw);
-      const p = ev.payload || ev;
-      sendChannelEvent(
-        `[AWB Chat] room=${p.room_id} from=${p.sender_name || p.sender_id} "${(p.content || '').slice(0, 80)}"`,
-        {
-          type: 'chat_room_message',
-          room_id: p.room_id || '',
-          sender_type: p.sender_type || '',
-          sender_id: p.sender_id || '',
-          sender_name: p.sender_name || '',
-          content: p.content || '',
-          timestamp: p.created_at || new Date().toISOString(),
-        },
-      );
-      log(`Chat room message forwarded: room=${p.room_id} sender=${p.sender_name || p.sender_id}`);
+      ev = JSON.parse(raw);
     } catch (err) {
       log(`Failed to parse chat_room_message: ${err.message}`);
+      return;
     }
+
+    const p = ev.payload || ev;
+
+    // Skip messages sent by agents to avoid self-reply loops
+    if (p.sender_type === 'agent') {
+      log(`Chat room message from agent (${p.sender_name || p.sender_id}) — skipping delegation`);
+      return;
+    }
+
+    const delegationEnabled = this.#config?.delegation?.enabled !== false;
+    const canDelegate = delegationEnabled && this.#subagentManager && this.#subagentManager.canSpawn();
+
+    if (canDelegate) {
+      try {
+        // Fetch recent conversation history for context
+        const history = await fetchChatRoomHistory(this.#config, p.room_id);
+        const rolePrompt = p.role_prompt || '';
+        const taskText = composeChatRoomPrompt(p.room_id, history, {
+          content: p.content || '',
+          sender_name: p.sender_name || '',
+          sender_id: p.sender_id || '',
+        });
+
+        const result = await this.#subagentManager.spawn({
+          kind: 'chat',
+          taskText,
+          rolePrompt,
+          chatRequestId: `room:${p.room_id}:${p.sender_id}:${p.created_at || ''}`,
+          ticketId: '',
+          agentId: '',
+        });
+
+        if (result.spawned) {
+          sendChannelEvent(
+            `[AWB Chat Room Subagent] Dispatched room=${p.room_id} sender=${p.sender_name || p.sender_id} pid=${result.pid}`,
+            {
+              type: 'subagent_dispatched',
+              subagent_kind: 'chat',
+              room_id: p.room_id || '',
+              sender_id: p.sender_id || '',
+              sender_name: p.sender_name || '',
+              pid: result.pid,
+              timestamp: p.created_at || new Date().toISOString(),
+            },
+          );
+          log(`Chat room message dispatched to subagent: room=${p.room_id} pid=${result.pid}`);
+          return;
+        }
+        log(`Chat room subagent spawn declined (${result.reason}), falling back to main session forward`);
+      } catch (err) {
+        log(`Chat room delegation path failed: ${err.message}, falling back to main session forward`);
+      }
+    }
+
+    // ── Fallback: notify main session ───────────────────────────────
+    sendChannelEvent(
+      `[AWB Chat] room=${p.room_id} from=${p.sender_name || p.sender_id} "${(p.content || '').slice(0, 80)}"`,
+      {
+        type: 'chat_room_message',
+        room_id: p.room_id || '',
+        sender_type: p.sender_type || '',
+        sender_id: p.sender_id || '',
+        sender_name: p.sender_name || '',
+        content: p.content || '',
+        timestamp: p.created_at || new Date().toISOString(),
+      },
+    );
+    log(`Chat room message forwarded (fallback path): room=${p.room_id} sender=${p.sender_name || p.sender_id}`);
   }
 
   #scheduleReconnect() {
@@ -770,6 +886,7 @@ class EventStream {
   // integration tests invoke the private handlers without opening a real SSE stream.
   _testDispatchTrigger(raw) { return this.#handleTrigger(raw); }
   _testDispatchChatRequest(raw) { return this.#handleChatRequest(raw); }
+  _testDispatchChatRoomMessage(raw) { return this.#handleChatRoomMessage(raw); }
 }
 
 // ─── Subagent Manager (Phase 4 D-55..D-75) ────────────────
@@ -1350,10 +1467,12 @@ export {
   fetchTicketContext,
   composeTriggerPrompt,
   composeChatPrompt,
+  composeChatRoomPrompt,
+  fetchChatRoomHistory,
 };
 
 // Test-only seams — only exported when AWB_TEST_MODE is set. Plan 04-04 integration
-// tests use these to invoke the private #handleTrigger / #handleChatRequest handlers
+// tests use these to invoke the private #handleTrigger / #handleChatRequest / #handleChatRoomMessage handlers
 // without opening a real SSE stream. Each seam creates a transient EventStream bound
 // to the provided (config, subagentManager) tuple and dispatches the raw payload.
 export const _testDispatchTrigger =
@@ -1366,4 +1485,10 @@ export const _testDispatchChatRequest =
   process.env.AWB_TEST_MODE === 'true'
     ? (config, subagentManager, raw) =>
         new EventStream(config, subagentManager)._testDispatchChatRequest(raw)
+    : undefined;
+
+export const _testDispatchChatRoomMessage =
+  process.env.AWB_TEST_MODE === 'true'
+    ? (config, subagentManager, raw) =>
+        new EventStream(config, subagentManager)._testDispatchChatRoomMessage(raw)
     : undefined;
