@@ -486,7 +486,8 @@ class EventStream {
     // #handleChatRequest for the other side of this asymmetry.
 
     // D-59: delegation branch — check config flag AND runtime capacity before choosing path
-    const delegationEnabled = this.#config?.delegation?.enabled === true;
+    // Default true when config key absent: undefined !== false evaluates to true.
+    const delegationEnabled = this.#config?.delegation?.enabled !== false;
     const canDelegate = delegationEnabled && this.#subagentManager && this.#subagentManager.canSpawn();
 
     if (canDelegate) {
@@ -565,57 +566,69 @@ class EventStream {
     // the counterpart to the flatten-on-emit path in #handleTrigger above. See
     // 01-02-SUMMARY.md:203 and 04-01-SUMMARY.md for the rationale.
     const payload = ev.payload || {};
-    const delegationEnabled = this.#config?.delegation?.enabled === true;
-    if (!delegationEnabled) {
-      // Phase 2 emitted chat_request with no consumer; when delegation is off, the
-      // proxy has nothing meaningful to do with the event. There is no legacy
-      // fallback (chat_request is a Phase 4 delegation-only event type).
-      log(`chat_request received but delegation disabled — no-op`);
-      return;
-    }
-    if (!this.#subagentManager || !this.#subagentManager.canSpawn()) {
-      log(`chat_request received but subagent manager unavailable or at cap — no-op`);
-      return;
-    }
+    // Default true when config key absent: undefined !== false evaluates to true.
+    const delegationEnabled = this.#config?.delegation?.enabled !== false;
+    const canDelegate = delegationEnabled && this.#subagentManager && this.#subagentManager.canSpawn();
 
-    const rolePrompt = payload.role_prompt || '';
-    const history = Array.isArray(payload.history) ? payload.history : [];
-    const newMessage = payload.new_message || '';
-    const taskText = composeChatPrompt(rolePrompt, history, newMessage);
+    if (canDelegate) {
+      const rolePrompt = payload.role_prompt || '';
+      const history = Array.isArray(payload.history) ? payload.history : [];
+      const newMessage = payload.new_message || '';
+      const taskText = composeChatPrompt(rolePrompt, history, newMessage);
 
-    try {
-      const result = await this.#subagentManager.spawn({
-        kind: 'chat',
-        taskText,
-        rolePrompt,
-        // Dedup key: agent + user + ticket + timestamp — protects against SSE reconnect duplicates
-        chatRequestId: payload.user_id
-          ? `${payload.agent_id}:${payload.user_id}:${payload.ticket_id || 'global'}:${ev.timestamp || ''}`
-          : undefined,
-        ticketId: payload.ticket_id || '',
-        agentId: payload.agent_id || '',
-      });
+      try {
+        const result = await this.#subagentManager.spawn({
+          kind: 'chat',
+          taskText,
+          rolePrompt,
+          // Dedup key: agent + user + ticket + timestamp — protects against SSE reconnect duplicates
+          chatRequestId: payload.user_id
+            ? `${payload.agent_id}:${payload.user_id}:${payload.ticket_id || 'global'}:${ev.timestamp || ''}`
+            : undefined,
+          ticketId: payload.ticket_id || '',
+          agentId: payload.agent_id || '',
+        });
 
-      if (result.spawned) {
-        sendChannelEvent(
-          `[AWB Chat Subagent] Dispatched agent=${payload.agent_id} user=${payload.user_id} pid=${result.pid}`,
-          {
-            type: 'subagent_dispatched',
-            subagent_kind: 'chat',
-            agent_id: payload.agent_id || '',
-            user_id: payload.user_id || '',
-            ticket_id: payload.ticket_id || '',
-            pid: result.pid,
-            timestamp: ev.timestamp || new Date().toISOString(),
-          },
-        );
-        log(`Chat request dispatched to subagent: agent=${payload.agent_id} pid=${result.pid}`);
-      } else {
-        log(`Chat subagent spawn declined (${result.reason})`);
+        if (result.spawned) {
+          sendChannelEvent(
+            `[AWB Chat Subagent] Dispatched agent=${payload.agent_id} user=${payload.user_id} pid=${result.pid}`,
+            {
+              type: 'subagent_dispatched',
+              subagent_kind: 'chat',
+              agent_id: payload.agent_id || '',
+              user_id: payload.user_id || '',
+              ticket_id: payload.ticket_id || '',
+              pid: result.pid,
+              timestamp: ev.timestamp || new Date().toISOString(),
+            },
+          );
+          log(`Chat request dispatched to subagent: agent=${payload.agent_id} pid=${result.pid}`);
+          return;
+        }
+        // spawn() returned {spawned: false, reason} — log and fall through to fallback path
+        log(`Chat subagent spawn declined (${result.reason}), falling back to main session forward`);
+      } catch (err) {
+        log(`Chat delegation path failed: ${err.message}, falling back to main session forward`);
+        // fall through to fallback path
       }
-    } catch (err) {
-      log(`Chat delegation path failed: ${err.message}`);
     }
+
+    // ── Fallback: notify main session ───────────────────────────────
+    // Runs when: delegation disabled OR subagentManager missing OR canSpawn false
+    // OR spawn declined OR delegation path threw.
+    sendChannelEvent(
+      `[AWB Chat Request] agent=${payload.agent_id} user=${payload.user_id} room=${payload.room_id || ''}`,
+      {
+        type: 'chat_request',
+        agent_id: payload.agent_id || '',
+        user_id: payload.user_id || '',
+        room_id: payload.room_id || '',
+        ticket_id: payload.ticket_id || '',
+        new_message: payload.new_message || '',
+        timestamp: ev.timestamp || new Date().toISOString(),
+      },
+    );
+    log(`Chat request forwarded (fallback path): agent=${payload.agent_id} user=${payload.user_id}`);
   }
 
   #handleBoardUpdate(raw) {
