@@ -315,7 +315,7 @@ class PresenceHeartbeat {
         method: 'initialize',
         params: {
           protocolVersion: '2025-03-26',
-          capabilities: {},
+          capabilities: { experimental: { 'awb/schemaVersion': 2 } },
           clientInfo: { name: 'awb-presence-heartbeat', version: '1.0.0' },
         },
       }),
