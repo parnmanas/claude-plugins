@@ -1158,6 +1158,13 @@ function runProxy(rl, config) {
     // Patch the server's response to include claude/channel capability
     if (msg.method === 'initialize') {
       try {
+        // Inject awb/schemaVersion so the server's schemaVersion gate accepts this
+        // proxy session. Claude CLI's raw initialize doesn't include it, causing the
+        // server to reject with "MCP proxy schemaVersion mismatch".
+        msg.params ??= {};
+        msg.params.capabilities ??= {};
+        msg.params.capabilities.experimental ??= {};
+        msg.params.capabilities.experimental['awb/schemaVersion'] = { version: 2 };
         const result = await forwardToServer(mcpUrl, config.apiKey, msg, sessionId);
         if (result.sessionId) sessionId = result.sessionId;
         send(patchInitializeResponse(result.body));
@@ -1205,6 +1212,7 @@ function runProxy(rl, config) {
   });
 
   rl.on('close', async () => {
+    log('stdin closed — shutting down proxy');
     eventStream?.stop();
     presenceHeartbeat.stop();
     try { await subagentManager.stop(); } catch { /* ignore */ }
