@@ -238,8 +238,8 @@ function composeChatPrompt(rolePrompt, history, newMessage) {
   lines.push('');
   lines.push('Instructions:');
   lines.push('- Compose a helpful reply using your knowledge and the conversation context.');
-  lines.push('- Reply ONLY via the mcp__awb__send_chat_message MCP tool.');
-  lines.push('- Do NOT print your reply to stdout — it must go through send_chat_message so the user sees it in the web UI.');
+  lines.push('- Reply ONLY via the mcp__awb__send_chat_room_message MCP tool (pass the room_id from the chat request context).');
+  lines.push('- Do NOT print your reply to stdout — it must go through send_chat_room_message so the user sees it in the web UI.');
   return lines.join('\n');
 }
 
@@ -457,6 +457,8 @@ class EventStream {
             this.#handleBoardUpdate(data);
           } else if (data && eventType === 'chat_request') {
             this.#handleChatRequest(data);
+          } else if (data && eventType === 'chat_room_message') {
+            this.#handleChatRoomMessage(data);
           }
           // Reset after processing data (SSE spec: dispatch on blank line,
           // but we process eagerly since each event: + data: pair is atomic)
@@ -637,6 +639,28 @@ class EventStream {
       log(`Board update forwarded: ticket=${ev.ticket_id} ${ev.entity_type}.${ev.action}`);
     } catch (err) {
       log(`Failed to parse board_update: ${err.message}`);
+    }
+  }
+
+  #handleChatRoomMessage(raw) {
+    try {
+      const ev = JSON.parse(raw);
+      const p = ev.payload || ev;
+      sendChannelEvent(
+        `[AWB Chat] room=${p.room_id} from=${p.sender_name || p.sender_id} "${(p.content || '').slice(0, 80)}"`,
+        {
+          type: 'chat_room_message',
+          room_id: p.room_id || '',
+          sender_type: p.sender_type || '',
+          sender_id: p.sender_id || '',
+          sender_name: p.sender_name || '',
+          content: p.content || '',
+          timestamp: p.created_at || new Date().toISOString(),
+        },
+      );
+      log(`Chat room message forwarded: room=${p.room_id} sender=${p.sender_name || p.sender_id}`);
+    } catch (err) {
+      log(`Failed to parse chat_room_message: ${err.message}`);
     }
   }
 
