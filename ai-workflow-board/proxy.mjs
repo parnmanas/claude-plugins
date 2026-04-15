@@ -713,19 +713,9 @@ class EventStream {
         });
 
         if (result.spawned) {
-          // Dispatch notification (D-59): lightweight "dispatched" line, NOT the full trigger payload
-          sendChannelEvent(
-            `[AWB Subagent] Dispatched ticket=${ev.ticket_id} trigger=${ev.field_changed} pid=${result.pid}`,
-            {
-              type: 'subagent_dispatched',
-              subagent_kind: 'trigger',
-              ticket_id: ev.ticket_id || '',
-              trigger_id: ev.field_changed || '',
-              agent_id: ev.actor_name || '',
-              pid: result.pid,
-              timestamp: ev.timestamp || new Date().toISOString(),
-            },
-          );
+          // Strategy A fix: do NOT send notifications/claude/channel for subagent_dispatched.
+          // Any sendChannelEvent() causes Claude CLI to close proxy stdin within ms, killing the proxy.
+          // The subagent handles its own work and reports back via send_chat_room_message / tool calls.
           log(`Trigger dispatched to subagent: ticket=${ev.ticket_id} pid=${result.pid}`);
           return;
         }
@@ -794,18 +784,8 @@ class EventStream {
         });
 
         if (result.spawned) {
-          sendChannelEvent(
-            `[AWB Chat Subagent] Dispatched agent=${payload.agent_id} user=${payload.user_id} pid=${result.pid}`,
-            {
-              type: 'subagent_dispatched',
-              subagent_kind: 'chat',
-              agent_id: payload.agent_id || '',
-              user_id: payload.user_id || '',
-              ticket_id: payload.ticket_id || '',
-              pid: result.pid,
-              timestamp: ev.timestamp || new Date().toISOString(),
-            },
-          );
+          // Strategy A fix: do NOT send notifications/claude/channel for subagent_dispatched.
+          // Any sendChannelEvent() causes Claude CLI to close proxy stdin within ms, killing the proxy.
           log(`Chat request dispatched to subagent: agent=${payload.agent_id} pid=${result.pid}`);
           return;
         }
@@ -900,18 +880,8 @@ class EventStream {
         });
 
         if (result.spawned) {
-          sendChannelEvent(
-            `[AWB Chat Room Subagent] Dispatched room=${p.room_id} sender=${p.sender_name || p.sender_id} pid=${result.pid}`,
-            {
-              type: 'subagent_dispatched',
-              subagent_kind: 'chat',
-              room_id: p.room_id || '',
-              sender_id: p.sender_id || '',
-              sender_name: p.sender_name || '',
-              pid: result.pid,
-              timestamp: p.created_at || new Date().toISOString(),
-            },
-          );
+          // Strategy A fix: do NOT send notifications/claude/channel for subagent_dispatched.
+          // Any sendChannelEvent() causes Claude CLI to close proxy stdin within ms, killing the proxy.
           log(`Chat room message dispatched to subagent: room=${p.room_id} pid=${result.pid}`);
           return;
         }
@@ -1034,6 +1004,17 @@ class SubagentManager {
       for (const rec of this.#map.values()) {
         if (rec.kind !== 'reservation' && rec.trigger_id === spec.triggerId) {
           return { spawned: false, reason: 'duplicate_trigger' };
+        }
+      }
+    }
+
+    // Strategy B fix: dedup by chatRequestId — prevents double-spawn when chat_request and
+    // chat_room_message both arrive for the same user message and both attempt delegation.
+    // Uses a separate check from triggerId to avoid namespace collisions between the two dedup keys.
+    if (spec.chatRequestId) {
+      for (const rec of this.#map.values()) {
+        if (rec.kind !== 'reservation' && rec.chat_request_id === spec.chatRequestId) {
+          return { spawned: false, reason: 'duplicate_chat' };
         }
       }
     }
@@ -1405,21 +1386,9 @@ function runProxy(rl, config) {
     } else {
       msg = `[AWB ${label}] ticket=${record.ticket_id || '-'} FAILED (exit=${code}, duration=${durationSec}s, see proxy logs)`;
     }
-    try {
-      sendChannelEvent(msg, {
-        type: 'subagent_complete',
-        subagent_kind: record.kind,
-        ticket_id: record.ticket_id || '',
-        trigger_id: record.trigger_id || '',
-        agent_id: record.agent_id || '',
-        pid,
-        exit_code: code ?? null,
-        signal: signal ?? null,
-        duration_sec: durationSec,
-      });
-    } catch (err) {
-      log(`Completion notification failed: ${err.message}`);
-    }
+    // Strategy A fix: do NOT send notifications/claude/channel for subagent_complete.
+    // Any sendChannelEvent() causes Claude CLI to close proxy stdin within ms, killing the proxy.
+    log(msg);
   };
 
   const shutdownHandler = async (signal) => {
