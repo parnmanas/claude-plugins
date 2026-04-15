@@ -18,7 +18,7 @@
  * { "url": "https://awb.example.com:7700", "apiKey": "awb_..." }
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, appendFileSync, mkdirSync, statSync, renameSync } from 'fs';
 import { promises as fsp } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
@@ -70,17 +70,62 @@ const STOP_GRACE_MS = 2_000;
 
 // ─── Helpers ──────────────────────────────────────────────
 
-/** Guard against unhandled errors crashing Claude CLI */
-process.on('uncaughtException', (err) => {
-  log(`Uncaught error: ${err.message}`);
-});
-process.on('unhandledRejection', (err) => {
-  log(`Unhandled rejection: ${err}`);
-});
+// ─── File logger ──────────────────────────────────────────
+// Persist logs to disk so crashes and exit causes survive the process.
+// Rotates at 5 MB by renaming to `.1` (single-gen rotation — cheap, no deps).
+
+const LOG_DIR = join(
+  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+  'channels', 'awb',
+);
+const LOG_PATH = join(LOG_DIR, 'proxy.log');
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
+
+try { mkdirSync(LOG_DIR, { recursive: true }); } catch { /* ignore */ }
+
+function writeLogLine(line) {
+  try {
+    const st = statSync(LOG_PATH);
+    if (st.size > LOG_MAX_BYTES) {
+      try { renameSync(LOG_PATH, LOG_PATH + '.1'); } catch { /* ignore */ }
+    }
+  } catch { /* file may not exist yet */ }
+  try { appendFileSync(LOG_PATH, line); } catch { /* disk full, readonly fs, etc. */ }
+}
 
 function log(msg) {
-  process.stderr.write(`[AWB] ${msg}\n`);
+  const line = `[${new Date().toISOString()}] [pid=${process.pid}] ${msg}\n`;
+  try { process.stderr.write(`[AWB] ${msg}\n`); } catch { /* ignore */ }
+  writeLogLine(line);
 }
+
+// ─── Crash / exit instrumentation ─────────────────────────
+// Claude CLI keeps MCP servers on stdio pipes; if anything pushes this process
+// toward exit we want the cause recorded. `exit` is sync-only, so the final
+// line is written via appendFileSync. SIGPIPE on stdout is handled explicitly
+// because an unhandled EPIPE kills Node by default.
+
+process.on('uncaughtException', (err) => {
+  log(`Uncaught error: ${err?.stack || err?.message || err}`);
+});
+process.on('unhandledRejection', (err) => {
+  log(`Unhandled rejection: ${err?.stack || err?.message || err}`);
+});
+process.on('exit', (code) => {
+  writeLogLine(`[${new Date().toISOString()}] [pid=${process.pid}] EXIT code=${code}\n`);
+});
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGPIPE']) {
+  process.on(sig, () => {
+    log(`Received ${sig}`);
+    if (sig !== 'SIGPIPE') process.exit(0);
+  });
+}
+process.stdout.on('error', (err) => {
+  log(`stdout error: ${err?.code || err?.message || err}`);
+  // EPIPE usually means Claude CLI closed its read end — no point staying up.
+  if (err?.code === 'EPIPE') process.exit(0);
+});
+process.stderr.on('error', () => { /* swallow; stderr loss is non-fatal */ });
 
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
@@ -501,6 +546,7 @@ class PresenceHeartbeat {
       throw new Error(`tools/call ping HTTP ${pingResp.status}`);
     }
     await pingResp.text().catch(() => null);
+    log(`Presence ping ok (agent=${this.#agentId.slice(0, 8)})`);
 
     // Step 4: DELETE session to free server-side state
     fetch(url, { method: 'DELETE', headers: sessionHeaders, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
