@@ -121,14 +121,29 @@ for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGPIPE']) {
   });
 }
 process.stdout.on('error', (err) => {
-  log(`stdout error: ${err?.code || err?.message || err}`);
+  log(`stdout error: code=${err?.code} msg=${err?.message} stack=${err?.stack?.split('\n')[1] || ''}`);
   // EPIPE usually means Claude CLI closed its read end — no point staying up.
   if (err?.code === 'EPIPE') process.exit(0);
 });
 process.stderr.on('error', () => { /* swallow; stderr loss is non-fatal */ });
 
+// DIAG v0.6.9: trace stdin lifecycle — fires BEFORE rl.on('close') so we can see
+// whether Claude CLI sent any final line or just dropped the pipe silently.
+process.stdin.on('end', () => log('[DIAG] stdin end event (EOF from Claude CLI)'));
+process.stdin.on('error', (err) => log(`[DIAG] stdin error: code=${err?.code} msg=${err?.message}`));
+process.stdin.on('close', () => log('[DIAG] stdin close event'));
+
 function send(obj) {
-  process.stdout.write(JSON.stringify(obj) + '\n');
+  const payload = JSON.stringify(obj) + '\n';
+  // DIAG v0.6.9: record every outbound write so we can correlate with stdin close.
+  // method + id/params-type + byte length; truncate content to keep log small.
+  try {
+    const method = obj?.method || (obj?.error ? 'error' : obj?.result ? 'result' : '?');
+    const metaType = obj?.params?.meta?.type ?? '';
+    log(`[DIAG] stdout.write method=${method} metaType=${metaType} bytes=${Buffer.byteLength(payload)}`);
+  } catch { /* ignore diag failure */ }
+  const ok = process.stdout.write(payload);
+  if (!ok) log('[DIAG] stdout.write returned false (backpressure)');
 }
 
 function sendError(id, code, message) {
@@ -1418,6 +1433,12 @@ function runProxy(rl, config) {
   process.once('SIGINT', () => shutdownHandler('SIGINT'));
 
   rl.on('line', async (line) => {
+    // DIAG v0.6.9: log EVERY inbound line — truncated — so we can see what (if anything)
+    // Claude CLI sends right before closing stdin.
+    try {
+      const preview = line.length > 160 ? line.slice(0, 160) + '…' : line;
+      log(`[DIAG] stdin.line bytes=${Buffer.byteLength(line)} preview=${preview}`);
+    } catch { /* ignore */ }
     let msg;
     try { msg = JSON.parse(line); } catch { return; }
 
