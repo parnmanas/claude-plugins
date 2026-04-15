@@ -60,9 +60,14 @@ const SUBAGENTS_PERSIST_PATH = join(
 const DELEGATION_DEFAULTS = Object.freeze({
   enabled: true,              // D-59: default-on; consumers still gated by Plan 04-03
   maxConcurrent: 5,           // D-63
-  ttlMinutes: 15,             // D-67
+  ttlMinutes: 15,             // D-67 (trigger subagents only)
   claudeBin: 'claude',        // D-75 — overridable for test stubs
   appendSystemPromptMode: 'role_only', // D-75 — reserved for Plan 04-03 prompt composition
+  // v0.7.0: persistent per-room chat subagents. When false, chat events spawn a
+  // fresh Claude CLI per message (legacy v0.6.x behavior) — rollback hatch.
+  persistentChatSessions: true,
+  idleMinutes: 10,            // session idle TTL before stdin is closed
+  maxTurnsPerSession: 30,     // soft respawn after N user turns to bound context growth
 });
 const TTL_SWEEP_INTERVAL_MS = 60_000;
 const SIGTERM_GRACE_MS = 5_000;
@@ -588,11 +593,13 @@ class EventStream {
   #stopped = false;
   #config;                    // Phase 4 Plan 04-03 — delegation branch decisions
   #subagentManager;           // Phase 4 Plan 04-03 — spawn target (may be null)
+  #chatSessionManager;        // v0.7.0 — persistent per-room chat sessions (may be null)
 
-  constructor(config, subagentManager = null) {
+  constructor(config, subagentManager = null, chatSessionManager = null) {
     this.#url = `${config.url.replace(/\/$/, '')}/api/events/stream?token=${encodeURIComponent(config.apiKey)}`;
     this.#config = config;
     this.#subagentManager = subagentManager;
+    this.#chatSessionManager = chatSessionManager;
   }
 
   start() {
@@ -762,6 +769,36 @@ class EventStream {
     const payload = ev.payload || {};
     // Default true when config key absent: undefined !== false evaluates to true.
     const delegationEnabled = this.#config?.delegation?.enabled !== false;
+    const persistentChat = this.#config?.delegation?.persistentChatSessions !== false;
+
+    // v0.7.0: prefer the persistent per-room session path when we have a room_id.
+    // Falls back to the legacy per-message spawn when the flag is disabled OR the
+    // event carries no room_id (shouldn't happen after the server-side fix, but the
+    // older SubagentManager path still covers the degenerate case).
+    if (delegationEnabled && persistentChat && this.#chatSessionManager && payload.room_id) {
+      try {
+        const result = await this.#chatSessionManager.dispatch({
+          roomId: payload.room_id,
+          senderId: payload.user_id || '',
+          senderName: '',
+          createdAt: ev.timestamp || '',
+          content: payload.new_message || '',
+          rolePrompt: payload.role_prompt || '',
+        });
+        if (result.dispatched) {
+          log(`Chat request dispatched to session: room=${payload.room_id} pid=${result.pid}${result.firstTurn ? ' (new session)' : ''}`);
+          return;
+        }
+        if (result.reason === 'duplicate_chat') {
+          log(`Chat request deduped: room=${payload.room_id} user=${payload.user_id} ts=${ev.timestamp || ''}`);
+          return;
+        }
+        log(`Chat session dispatch declined (${result.reason}), falling back to legacy path`);
+      } catch (err) {
+        log(`Chat session path failed: ${err.message}, falling back to legacy path`);
+      }
+    }
+
     const canDelegate = delegationEnabled && this.#subagentManager && this.#subagentManager.canSpawn();
 
     if (canDelegate) {
@@ -786,16 +823,12 @@ class EventStream {
         });
 
         if (result.spawned) {
-          // Strategy A fix: do NOT send notifications/claude/channel for subagent_dispatched.
-          // Any sendChannelEvent() causes Claude CLI to close proxy stdin within ms, killing the proxy.
           log(`Chat request dispatched to subagent: agent=${payload.agent_id} pid=${result.pid}`);
           return;
         }
-        // spawn() returned {spawned: false, reason} — log and fall through to fallback path
         log(`Chat subagent spawn declined (${result.reason}), falling back to main session forward`);
       } catch (err) {
         log(`Chat delegation path failed: ${err.message}, falling back to main session forward`);
-        // fall through to fallback path
       }
     }
 
@@ -852,6 +885,10 @@ class EventStream {
 
     const p = ev.payload || ev;
 
+    // Always record the message into the per-room history ring — gives warm
+    // context to any late-starting session, and keeps agent replies in view.
+    this.#chatSessionManager?.recordRoomMessage(p);
+
     // Skip messages sent by agents to avoid self-reply loops
     if (p.sender_type === 'agent') {
       log(`Chat room message from agent (${p.sender_name || p.sender_id}) — skipping delegation`);
@@ -859,11 +896,36 @@ class EventStream {
     }
 
     const delegationEnabled = this.#config?.delegation?.enabled !== false;
+    const persistentChat = this.#config?.delegation?.persistentChatSessions !== false;
+
+    if (delegationEnabled && persistentChat && this.#chatSessionManager && p.room_id) {
+      try {
+        const result = await this.#chatSessionManager.dispatch({
+          roomId: p.room_id,
+          senderId: p.sender_id || '',
+          senderName: p.sender_name || '',
+          createdAt: p.created_at || '',
+          content: p.content || '',
+          rolePrompt: p.role_prompt || '',
+        });
+        if (result.dispatched) {
+          log(`Chat room message dispatched to session: room=${p.room_id} pid=${result.pid}${result.firstTurn ? ' (new session)' : ''}`);
+          return;
+        }
+        if (result.reason === 'duplicate_chat') {
+          log(`Chat room message deduped: room=${p.room_id} sender=${p.sender_id} ts=${p.created_at || ''}`);
+          return;
+        }
+        log(`Chat room session dispatch declined (${result.reason}), falling back to legacy path`);
+      } catch (err) {
+        log(`Chat room session path failed: ${err.message}, falling back to legacy path`);
+      }
+    }
+
     const canDelegate = delegationEnabled && this.#subagentManager && this.#subagentManager.canSpawn();
 
     if (canDelegate) {
       try {
-        // Fetch recent conversation history for context
         const history = await fetchChatRoomHistory(this.#config, p.room_id);
         const rolePrompt = p.role_prompt || '';
         const taskText = composeChatRoomPrompt(p.room_id, history, {
@@ -882,8 +944,6 @@ class EventStream {
         });
 
         if (result.spawned) {
-          // Strategy A fix: do NOT send notifications/claude/channel for subagent_dispatched.
-          // Any sendChannelEvent() causes Claude CLI to close proxy stdin within ms, killing the proxy.
           log(`Chat room message dispatched to subagent: room=${p.room_id} pid=${result.pid}`);
           return;
         }
@@ -1258,6 +1318,291 @@ class SubagentManager {
   }
 }
 
+// ─── Chat Session Manager (v0.7.0 persistent per-room chat subagents) ────
+/**
+ * Keeps one Claude CLI child alive per chat room so that successive messages
+ * reuse the same KV cache instead of paying cold-start + MCP handshake per turn.
+ *
+ * The child is launched with `--input-format stream-json --output-format stream-json`.
+ * First turn text is composed with composeChatRoomPrompt() and seeded with recent
+ * room history (from the proxy's in-memory ring buffer, fallback: REST history).
+ * Subsequent turns are lean user-turn NDJSON lines written to the child's stdin.
+ *
+ * Lifecycle bounds keep the memory footprint finite:
+ *   - IDLE_TTL (idleMinutes):         no traffic → stdin.end() → child exits
+ *   - MAX_TURNS (maxTurnsPerSession): respawn on next message (fresh context)
+ *   - CAP (maxConcurrent):            LRU-evict oldest-idle before spawn
+ *
+ * Dedup: `msg:${sender_id}:${created_at}` collides for chat_request and
+ * chat_room_message covering the same savedMessage, so each user turn dispatches
+ * exactly once even though two SSE events arrive.
+ */
+class ChatSessionManager {
+  #config;
+  #sessions = new Map();         // roomId → session
+  #historyRing = new Map();      // roomId → ChatRoomMessagePayload[] (max 30)
+  #dedupSet = new Set();
+  #dedupQueue = [];              // fifo for bounded dedup
+  #DEDUP_MAX = 200;
+  #HISTORY_MAX = 30;
+
+  constructor(config) {
+    this.#config = config;
+  }
+
+  /** Called from SSE reader for every chat_room_message we see — warms the ring. */
+  recordRoomMessage(payload) {
+    const rid = payload?.room_id;
+    if (!rid) return;
+    let buf = this.#historyRing.get(rid);
+    if (!buf) { buf = []; this.#historyRing.set(rid, buf); }
+    buf.push({
+      sender_type: payload.sender_type,
+      sender_id: payload.sender_id,
+      sender_name: payload.sender_name,
+      content: payload.content,
+      created_at: payload.created_at,
+    });
+    while (buf.length > this.#HISTORY_MAX) buf.shift();
+  }
+
+  /**
+   * Dispatch a user turn into the room's live session, spawning one if needed.
+   * spec = { roomId, senderId, senderName, createdAt, content, rolePrompt }
+   * Returns { dispatched: boolean, pid?: number, reason?: string, firstTurn?: boolean }.
+   */
+  async dispatch(spec) {
+    if (!spec.roomId) return { dispatched: false, reason: 'no_room' };
+
+    // Dedup: same user message may arrive via both chat_request and chat_room_message
+    const dedupKey = `msg:${spec.senderId || ''}:${spec.createdAt || ''}`;
+    if (this.#dedupSet.has(dedupKey)) {
+      return { dispatched: false, reason: 'duplicate_chat' };
+    }
+    this.#rememberDedup(dedupKey);
+
+    let sess = this.#sessions.get(spec.roomId);
+
+    if (sess) {
+      // Existing live session — just stream another user turn into stdin.
+      this.#writeTurn(sess, spec.content || '');
+      sess.turnCount++;
+      sess.lastTouchedAt = Date.now();
+      this.#resetIdleTimer(sess);
+      const maxTurns = this.#config.delegation.maxTurnsPerSession ?? 30;
+      if (sess.turnCount >= maxTurns) {
+        log(`[chat-session] room=${spec.roomId} hit maxTurns=${maxTurns}, closing stdin for respawn`);
+        try { sess.child.stdin.end(); } catch { /* already closed */ }
+      }
+      return { dispatched: true, pid: sess.pid };
+    }
+
+    // No live session — need to spawn. Check cap; try LRU-evict oldest idle on overflow.
+    const cap = this.#config.delegation.maxConcurrent ?? 5;
+    if (this.#sessions.size >= cap) {
+      const evicted = this.#evictLru();
+      if (!evicted) return { dispatched: false, reason: 'cap_busy' };
+    }
+
+    // Bootstrap history: ring first, REST as fallback.
+    let history = (this.#historyRing.get(spec.roomId) || []).slice();
+    if (history.length === 0) {
+      try { history = await fetchChatRoomHistory(this.#config, spec.roomId); } catch { history = []; }
+    }
+    const firstTurnText = composeChatRoomPrompt(spec.roomId, history, {
+      content: spec.content || '',
+      sender_name: spec.senderName || '',
+      sender_id: spec.senderId || '',
+    });
+
+    const spawned = await this.#spawn(spec.roomId, spec.rolePrompt || '', firstTurnText);
+    if (!spawned) return { dispatched: false, reason: 'spawn_failed' };
+    this.#sessions.set(spec.roomId, spawned);
+    return { dispatched: true, pid: spawned.pid, firstTurn: true };
+  }
+
+  async #spawn(roomId, rolePrompt, firstTurnText) {
+    let configPath = null;
+    try {
+      configPath = join(
+        SUBAGENTS_BASE_DIR,
+        `cfg-chat-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+      );
+      await fsp.mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
+      const mcpConfig = {
+        mcpServers: {
+          awb: {
+            type: 'http',
+            url: `${this.#config.url.replace(/\/$/, '')}/mcp`,
+            headers: { Authorization: `Bearer ${this.#config.apiKey}` },
+          },
+        },
+      };
+      await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
+
+      // stream-json input format requires --verbose for --print.
+      const args = [
+        '--print',
+        '--input-format', 'stream-json',
+        '--output-format', 'stream-json',
+        '--verbose',
+        '--mcp-config', configPath,
+        '--strict-mcp-config',
+        '--allowedTools', 'mcp__awb__*',
+        '--append-system-prompt', rolePrompt || '',
+        '--dangerously-skip-permissions',
+      ];
+      const child = spawn(this.#config.delegation.claudeBin, args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: true,
+        env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
+      });
+      child.unref();
+
+      if (!child.pid) {
+        await fsp.unlink(configPath).catch(() => {});
+        return null;
+      }
+
+      const sess = {
+        roomId,
+        pid: child.pid,
+        child,
+        configPath,
+        turnCount: 0,
+        startedAt: Date.now(),
+        lastTouchedAt: Date.now(),
+        idleTimer: null,
+      };
+      this.#wireStdio(sess);
+      this.#wireExit(sess);
+
+      log(`Subagent spawned: pid=${sess.pid} kind=chat_session room=${roomId}`);
+
+      // Seed the first turn — role prompt + history + the current user message.
+      this.#writeTurn(sess, firstTurnText);
+      sess.turnCount = 1;
+      this.#resetIdleTimer(sess);
+      return sess;
+    } catch (err) {
+      log(`[chat-session] spawn error room=${roomId}: ${err.message}`);
+      if (configPath) await fsp.unlink(configPath).catch(() => {});
+      return null;
+    }
+  }
+
+  #writeTurn(sess, text) {
+    const obj = {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: String(text) }] },
+    };
+    try {
+      sess.child.stdin.write(JSON.stringify(obj) + '\n');
+      log(`[chat-session] dispatched turn room=${sess.roomId} pid=${sess.pid} turn=${sess.turnCount + 1} bytes=${Buffer.byteLength(text)}`);
+    } catch (err) {
+      log(`[chat-session] stdin write failed pid=${sess.pid}: ${err.message}`);
+    }
+  }
+
+  #wireStdio(sess) {
+    if (sess.child.stdout) {
+      const rlOut = createInterface({ input: sess.child.stdout });
+      rlOut.on('line', (line) => {
+        // stream-json: one JSON object per line. Log result events; everything
+        // else (assistant/system/tool_use) gets a terse line for debugging.
+        try {
+          const obj = JSON.parse(line);
+          if (obj?.type === 'result') {
+            log(`[chat-session:${sess.pid}] result subtype=${obj.subtype || '-'} is_error=${obj.is_error ?? '-'}`);
+          } else if (obj?.type) {
+            // Keep these quiet — they are frequent and mostly noise in the proxy log.
+          }
+        } catch {
+          // non-JSON (rare); ignore
+        }
+      });
+    }
+    if (sess.child.stderr) {
+      const rlErr = createInterface({ input: sess.child.stderr });
+      rlErr.on('line', (line) => log(`[chat-session:${sess.pid}:err] ${line}`));
+    }
+  }
+
+  #wireExit(sess) {
+    sess.child.once('exit', async (code, signal) => {
+      if (sess.idleTimer) { clearTimeout(sess.idleTimer); sess.idleTimer = null; }
+      const durationSec = Math.round((Date.now() - sess.startedAt) / 1000);
+      log(`[chat-session] exit pid=${sess.pid} room=${sess.roomId} code=${code} signal=${signal || '-'} turns=${sess.turnCount} duration=${durationSec}s`);
+      if (this.#sessions.get(sess.roomId) === sess) this.#sessions.delete(sess.roomId);
+      if (sess.configPath) {
+        try { await fsp.unlink(sess.configPath); } catch { /* best-effort */ }
+      }
+    });
+    sess.child.once('error', (err) => log(`[chat-session] child error pid=${sess.pid}: ${err.message}`));
+  }
+
+  #resetIdleTimer(sess) {
+    if (sess.idleTimer) clearTimeout(sess.idleTimer);
+    const mins = this.#config.delegation.idleMinutes ?? 10;
+    sess.idleTimer = setTimeout(() => {
+      log(`[chat-session] idle, closing stdin room=${sess.roomId} pid=${sess.pid}`);
+      try { sess.child.stdin.end(); } catch { /* already closed */ }
+    }, mins * 60_000);
+    if (typeof sess.idleTimer.unref === 'function') sess.idleTimer.unref();
+  }
+
+  #evictLru() {
+    let oldestKey = null;
+    let oldest = Infinity;
+    for (const [k, s] of this.#sessions.entries()) {
+      if (s.lastTouchedAt < oldest) { oldest = s.lastTouchedAt; oldestKey = k; }
+    }
+    if (!oldestKey) return false;
+    const s = this.#sessions.get(oldestKey);
+    log(`[chat-session] evicting lru room=${oldestKey} pid=${s.pid}`);
+    if (s.idleTimer) { clearTimeout(s.idleTimer); s.idleTimer = null; }
+    try { s.child.stdin.end(); } catch { /* already closed */ }
+    this.#sessions.delete(oldestKey);
+    return true;
+  }
+
+  #rememberDedup(key) {
+    this.#dedupSet.add(key);
+    this.#dedupQueue.push(key);
+    while (this.#dedupQueue.length > this.#DEDUP_MAX) {
+      const old = this.#dedupQueue.shift();
+      this.#dedupSet.delete(old);
+    }
+  }
+
+  async stop() {
+    const sessions = Array.from(this.#sessions.values());
+    for (const sess of sessions) {
+      if (sess.idleTimer) { clearTimeout(sess.idleTimer); sess.idleTimer = null; }
+      try { sess.child.stdin.end(); } catch { /* ignore */ }
+      try { process.kill(sess.pid, 'SIGTERM'); } catch { /* dead */ }
+    }
+    if (sessions.length === 0) { this.#sessions.clear(); return; }
+    await new Promise((r) => setTimeout(r, STOP_GRACE_MS));
+    for (const sess of sessions) {
+      try { process.kill(sess.pid, 'SIGKILL'); } catch { /* gone */ }
+    }
+    this.#sessions.clear();
+    log(`ChatSessionManager stopped (terminated ${sessions.length} sessions)`);
+  }
+
+  /** Test-only accessor: snapshot of active sessions. */
+  _snapshot() {
+    return Array.from(this.#sessions.values()).map((s) => ({
+      roomId: s.roomId,
+      pid: s.pid,
+      turnCount: s.turnCount,
+      startedAt: s.startedAt,
+      lastTouchedAt: s.lastTouchedAt,
+    }));
+  }
+}
+
 // ─── MCP Proxy ────────────────────────────────────────────
 
 /**
@@ -1372,6 +1717,9 @@ function runProxy(rl, config) {
   // Fire-and-forget init; log on failure. init() is idempotent and defers TTL sweep to setInterval.
   subagentManager.init().catch((err) => log(`SubagentManager init failed: ${err.message}`));
 
+  // v0.7.0: persistent per-room chat sessions (separate lifecycle from trigger subagents).
+  const chatSessionManager = new ChatSessionManager(config);
+
   // Phase 4 D-69: completion notification. Fires for every subagent exit
   // (normal completion, non-zero failure, or TTL SIGTERM/SIGKILL timeout).
   // SubagentManager invokes this inside its exit handler — see Plan 04-02 #wireExitHandler.
@@ -1395,6 +1743,7 @@ function runProxy(rl, config) {
     presenceHeartbeat._real?.stop();
     eventStream?.stop();
     try { await subagentManager.stop(); } catch (err) { log(`shutdown: ${err.message}`); }
+    try { await chatSessionManager.stop(); } catch (err) { log(`shutdown (chat): ${err.message}`); }
     process.exit(0);
   };
   process.once('SIGTERM', () => shutdownHandler('SIGTERM'));
@@ -1435,7 +1784,7 @@ function runProxy(rl, config) {
     // Start SSE stream AFTER handshake completes (Claude is ready to receive)
     if (msg.method === 'notifications/initialized') {
       if (!eventStream) {
-        eventStream = new EventStream(config, subagentManager);
+        eventStream = new EventStream(config, subagentManager, chatSessionManager);
         eventStream.start();
         // Wait for agent_id resolution, then start heartbeat
         agentIdReady.then((agentId) => {
@@ -1504,6 +1853,7 @@ if (isDirectExecution) {
 
 export {
   SubagentManager,
+  ChatSessionManager,
   DELEGATION_DEFAULTS,
   loadConfig,
   EventStream,
@@ -1526,12 +1876,12 @@ export const _testDispatchTrigger =
 
 export const _testDispatchChatRequest =
   process.env.AWB_TEST_MODE === 'true'
-    ? (config, subagentManager, raw) =>
-        new EventStream(config, subagentManager)._testDispatchChatRequest(raw)
+    ? (config, subagentManager, raw, chatSessionManager = null) =>
+        new EventStream(config, subagentManager, chatSessionManager)._testDispatchChatRequest(raw)
     : undefined;
 
 export const _testDispatchChatRoomMessage =
   process.env.AWB_TEST_MODE === 'true'
-    ? (config, subagentManager, raw) =>
-        new EventStream(config, subagentManager)._testDispatchChatRoomMessage(raw)
+    ? (config, subagentManager, raw, chatSessionManager = null) =>
+        new EventStream(config, subagentManager, chatSessionManager)._testDispatchChatRoomMessage(raw)
     : undefined;
