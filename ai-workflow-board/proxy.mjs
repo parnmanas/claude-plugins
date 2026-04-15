@@ -775,9 +775,11 @@ class EventStream {
           kind: 'chat',
           taskText,
           rolePrompt,
-          // Dedup key: agent + user + ticket + timestamp — protects against SSE reconnect duplicates
+          // v0.6.11: unified dedup key so chat_request and chat_room_message — both emitted
+          // for the same user message (same savedMsg.created_at) — collide on spawn().
+          // Previously each handler used a different key format and double-spawned.
           chatRequestId: payload.user_id
-            ? `${payload.agent_id}:${payload.user_id}:${payload.ticket_id || 'global'}:${ev.timestamp || ''}`
+            ? `msg:${payload.user_id}:${ev.timestamp || ''}`
             : undefined,
           ticketId: payload.ticket_id || '',
           agentId: payload.agent_id || '',
@@ -874,7 +876,7 @@ class EventStream {
           kind: 'chat',
           taskText,
           rolePrompt,
-          chatRequestId: `room:${p.room_id}:${p.sender_id}:${p.created_at || ''}`,
+          chatRequestId: `msg:${p.sender_id}:${p.created_at || ''}`,
           ticketId: '',
           agentId: '',
         });
@@ -1026,14 +1028,17 @@ class SubagentManager {
     const reservationId = -(++this.#reservationCounter);
     this.#map.set(reservationId, { kind: 'reservation', started_at: Date.now() });
 
-    let finalConfigPath = null;
+    let configPath = null;
     try {
-      // Step A: write per-subagent MCP config file to a temp path first (we don't have pid yet)
-      const tmpConfigPath = join(
+      // Write per-subagent MCP config file. Pitfall 7 (v0.6.11): the child Claude CLI
+      // reads --mcp-config lazily after spawn returns. We must NOT rename the file
+      // after spawn — the child will fail with "MCP config file not found". Keep the
+      // file at its original path for the child's entire lifetime; cleanup on exit.
+      configPath = join(
         this.#pidDir,
-        `pending-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+        `cfg-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
       );
-      await fsp.mkdir(dirname(tmpConfigPath), { recursive: true, mode: 0o700 });
+      await fsp.mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
 
       // CRITICAL (Pitfall 1): wrapper shape. Bare {serverName: {...}} is REJECTED.
       const mcpConfig = {
@@ -1045,14 +1050,14 @@ class SubagentManager {
           },
         },
       };
-      await fsp.writeFile(tmpConfigPath, JSON.stringify(mcpConfig), { mode: 0o600 });
+      await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 
-      // Step B: spawn. Pitfall 6: stdio[0]='ignore' closes child stdin.
+      // Spawn. Pitfall 6: stdio[0]='ignore' closes child stdin.
       // All argv values are separate array elements — never shell-interpolated.
       const args = [
         '--print',
         '--output-format', 'json',
-        '--mcp-config', tmpConfigPath,
+        '--mcp-config', configPath,
         '--strict-mcp-config',
         '--allowedTools', 'mcp__awb__*',
         '--append-system-prompt', spec.rolePrompt || '',
@@ -1072,17 +1077,11 @@ class SubagentManager {
 
       const pid = child.pid;
       if (!pid) {
-        await fsp.unlink(tmpConfigPath).catch(() => {});
+        await fsp.unlink(configPath).catch(() => {});
         this.#map.delete(reservationId);
         return { spawned: false, reason: 'spawn_failed' };
       }
 
-      // Step C: rename config file into a pid-keyed directory
-      finalConfigPath = join(this.#pidDir, String(pid), 'mcp-config.json');
-      await fsp.mkdir(dirname(finalConfigPath), { recursive: true, mode: 0o700 });
-      await fsp.rename(tmpConfigPath, finalConfigPath);
-
-      // Step D: register record
       const record = {
         pid,
         kind: spec.kind,
@@ -1092,7 +1091,7 @@ class SubagentManager {
         agent_id: spec.agentId || null,
         started_at: Date.now(),
         expected_completion_at: Date.now() + this.#config.delegation.ttlMinutes * 60_000,
-        config_path: finalConfigPath,
+        config_path: configPath,
         process_handle: child,
       };
       this.#map.delete(reservationId);
@@ -1106,8 +1105,8 @@ class SubagentManager {
       return { spawned: true, pid };
     } catch (err) {
       this.#map.delete(reservationId);
-      if (finalConfigPath) {
-        await fsp.rm(dirname(finalConfigPath), { recursive: true, force: true }).catch(() => {});
+      if (configPath) {
+        await fsp.unlink(configPath).catch(() => {});
       }
       log(`Subagent spawn error: ${err.message}`);
       return { spawned: false, reason: 'exception' };
@@ -1122,7 +1121,7 @@ class SubagentManager {
       this.#map.delete(pid);
       this.#persist();
       try {
-        await fsp.rm(dirname(record.config_path), { recursive: true, force: true });
+        await fsp.unlink(record.config_path);
       } catch { /* best-effort */ }
       // Plan 04-03 wraps sendChannelEvent() here to notify the main session.
       // Plan 04-02 leaves a log line only; consumers are not yet wired.
