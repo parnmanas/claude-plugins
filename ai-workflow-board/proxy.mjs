@@ -1063,11 +1063,16 @@ class SubagentManager {
         '--dangerously-skip-permissions',
         spec.taskText,
       ];
+      // detached:true puts the child in its own process group so signals aimed
+      // at the proxy's pgrp (SIGHUP from a closing terminal, SIGINT from Ctrl+C
+      // in the parent Claude CLI) don't cascade and kill in-flight work.
+      // TTL sweep and explicit SIGTERM/SIGKILL by pid still work.
       const child = spawn(this.#config.delegation.claudeBin, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        detached: false,     // D-62: signals propagate to children
+        detached: true,
         env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
       });
+      child.unref();
 
       const pid = child.pid;
       if (!pid) {
@@ -1478,10 +1483,13 @@ function runProxy(rl, config) {
   });
 
   rl.on('close', async () => {
-    log('stdin closed — shutting down proxy');
+    // stdin close = parent Claude CLI went away (exit, terminal closed, crash).
+    // We tear down our own I/O but deliberately ORPHAN any running subagents —
+    // they were already dispatched and should finish their work. Killing them
+    // here was the cause of v0.6.7 "dispatch then immediate SIGTERM" losses.
+    log('stdin closed — orphaning subagents and exiting proxy');
     eventStream?.stop();
     presenceHeartbeat._real?.stop();
-    try { await subagentManager.stop(); } catch { /* ignore */ }
     process.exit(0);
   });
 
