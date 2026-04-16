@@ -399,11 +399,10 @@ function composeChatPrompt(rolePrompt, history, newMessage) {
 async function fetchChatRoomHistory(config, roomId, limit = 20) {
   if (!roomId) return [];
   try {
-    const url = `${config.url.replace(/\/$/, '')}/api/chat-rooms/${encodeURIComponent(roomId)}/messages?limit=${limit}`;
+    const url = `${config.url.replace(/\/$/, '')}/api/agent/chat-rooms/${encodeURIComponent(roomId)}/messages?limit=${limit}`;
     const resp = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        Accept: 'application/json',
+        'X-Agent-Key': config.apiKey,
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -917,6 +916,28 @@ class EventStream {
     }
   }
 
+  async #setChatRoomTyping(roomId, isTyping) {
+    try {
+      const agentInfo = loadAgentInfo();
+      const url = `${this.#config.url.replace(/\/$/, '')}/api/agent/chat-rooms/${encodeURIComponent(roomId)}/typing`;
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-Agent-Key': this.#config.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          agent_id: agentInfo?.agent_id || '',
+          agent_name: agentInfo?.name || agentInfo?.agent_name || 'Agent',
+          is_typing: isTyping,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (err) {
+      log(`setChatRoomTyping failed: ${err.message}`);
+    }
+  }
+
   async #handleChatRoomMessage(raw) {
     let ev;
     try {
@@ -936,6 +957,11 @@ class EventStream {
     if (p.sender_type === 'agent') {
       log(`Chat room message from agent (${p.sender_name || p.sender_id}) — skipping delegation`);
       return;
+    }
+
+    // Signal typing=true before dispatching — client auto-clears on message arrival
+    if (p.room_id) {
+      await this.#setChatRoomTyping(p.room_id, true);
     }
 
     const delegationEnabled = this.#config?.delegation?.enabled !== false;
@@ -1483,12 +1509,9 @@ class ChatSessionManager {
       };
       await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 
-      // stream-json input format requires --verbose for --print.
       const args = [
-        '--print',
         '--input-format', 'stream-json',
         '--output-format', 'stream-json',
-        '--verbose',
         '--mcp-config', configPath,
         '--strict-mcp-config',
         '--allowedTools', 'mcp__awb__*',
@@ -1776,10 +1799,8 @@ class TicketSessionManager {
       await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 
       const args = [
-        '--print',
         '--input-format', 'stream-json',
         '--output-format', 'stream-json',
-        '--verbose',
         '--mcp-config', configPath,
         '--strict-mcp-config',
         '--allowedTools', 'mcp__awb__*',
