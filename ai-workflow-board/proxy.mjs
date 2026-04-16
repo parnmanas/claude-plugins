@@ -971,20 +971,19 @@ class EventStream {
 
     const p = ev.payload || ev;
 
-    // Always record the message into the per-room history ring — gives warm
-    // context to any late-starting session, and keeps agent replies in view.
-    this.#chatSessionManager?.recordRoomMessage(p);
-
-    // Skip messages sent by agents to avoid self-reply loops
+    // Skip messages sent by agents to avoid self-reply loops. Still record into
+    // the ring so subsequent dispatches see them as conversation history.
     if (p.sender_type === 'agent') {
+      this.#chatSessionManager?.recordRoomMessage(p);
       log(`Chat room message from agent (${p.sender_name || p.sender_id}) — skipping delegation`);
       return;
     }
 
-    // Immediate emoji acknowledgment — user sees response within 1s
+    // Immediate visual feedback via typing indicator — ephemeral, auto-clears
+    // when the real reply arrives. Combining the emoji into status keeps it
+    // out of the persisted message log so we don't accumulate stale acks.
     if (p.room_id) {
-      await this.#sendChatRoomAck(p.room_id, '👀');
-      await this.#setChatRoomTyping(p.room_id, true, 'reading context');
+      await this.#setChatRoomTyping(p.room_id, true, '👀 reading context');
     }
 
     const delegationEnabled = this.#config?.delegation?.enabled !== false;
@@ -1001,6 +1000,10 @@ class EventStream {
           content: p.content || '',
           rolePrompt: p.role_prompt || '',
         });
+        // Record into ring AFTER dispatch so the spawn path sees real prior
+        // history (or empty → REST fallback) rather than self-referencing
+        // the very message that triggered the dispatch.
+        this.#chatSessionManager?.recordRoomMessage(p);
         if (result.dispatched) {
           await this.#setChatRoomTyping(p.room_id, true, 'composing reply');
           log(`Chat room message dispatched to session: room=${p.room_id} pid=${result.pid}${result.firstTurn ? ' (new session)' : ''}`);
