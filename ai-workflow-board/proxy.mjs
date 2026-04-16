@@ -916,7 +916,7 @@ class EventStream {
     }
   }
 
-  async #setChatRoomTyping(roomId, isTyping) {
+  async #setChatRoomTyping(roomId, isTyping, status = null) {
     try {
       const agentInfo = loadAgentInfo();
       const url = `${this.#config.url.replace(/\/$/, '')}/api/agent/chat-rooms/${encodeURIComponent(roomId)}/typing`;
@@ -930,11 +930,33 @@ class EventStream {
           agent_id: agentInfo?.agent_id || '',
           agent_name: agentInfo?.name || agentInfo?.agent_name || 'Agent',
           is_typing: isTyping,
+          status: status,
         }),
         signal: AbortSignal.timeout(5000),
       });
     } catch (err) {
       log(`setChatRoomTyping failed: ${err.message}`);
+    }
+  }
+
+  async #sendChatRoomAck(roomId, content) {
+    try {
+      const agentInfo = loadAgentInfo();
+      const url = `${this.#config.url.replace(/\/$/, '')}/api/agent/chat-rooms/${encodeURIComponent(roomId)}/messages`;
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-Agent-Key': this.#config.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          agent_id: agentInfo?.agent_id || '',
+          content,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (err) {
+      log(`sendChatRoomAck failed: ${err.message}`);
     }
   }
 
@@ -959,9 +981,10 @@ class EventStream {
       return;
     }
 
-    // Signal typing=true before dispatching — client auto-clears on message arrival
+    // Immediate emoji acknowledgment — user sees response within 1s
     if (p.room_id) {
-      await this.#setChatRoomTyping(p.room_id, true);
+      await this.#sendChatRoomAck(p.room_id, '👀');
+      await this.#setChatRoomTyping(p.room_id, true, 'reading context');
     }
 
     const delegationEnabled = this.#config?.delegation?.enabled !== false;
@@ -969,6 +992,7 @@ class EventStream {
 
     if (delegationEnabled && persistentChat && this.#chatSessionManager && p.room_id) {
       try {
+        await this.#setChatRoomTyping(p.room_id, true, 'thinking');
         const result = await this.#chatSessionManager.dispatch({
           roomId: p.room_id,
           senderId: p.sender_id || '',
@@ -978,6 +1002,7 @@ class EventStream {
           rolePrompt: p.role_prompt || '',
         });
         if (result.dispatched) {
+          await this.#setChatRoomTyping(p.room_id, true, 'composing reply');
           log(`Chat room message dispatched to session: room=${p.room_id} pid=${result.pid}${result.firstTurn ? ' (new session)' : ''}`);
           return;
         }
@@ -995,6 +1020,7 @@ class EventStream {
 
     if (canDelegate) {
       try {
+        await this.#setChatRoomTyping(p.room_id, true, 'thinking');
         const history = await fetchChatRoomHistory(this.#config, p.room_id);
         const rolePrompt = p.role_prompt || '';
         const taskText = composeChatRoomPrompt(p.room_id, history, {
@@ -1013,6 +1039,7 @@ class EventStream {
         });
 
         if (result.spawned) {
+          await this.#setChatRoomTyping(p.room_id, true, 'composing reply');
           log(`Chat room message dispatched to subagent: room=${p.room_id} pid=${result.pid}`);
           return;
         }
