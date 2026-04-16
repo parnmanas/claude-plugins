@@ -1540,6 +1540,7 @@ class ChatSessionManager {
       await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 
       const args = [
+        '--verbose',
         '--input-format', 'stream-json',
         '--output-format', 'stream-json',
         '--mcp-config', configPath,
@@ -1829,6 +1830,7 @@ class TicketSessionManager {
       await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 
       const args = [
+        '--verbose',
         '--input-format', 'stream-json',
         '--output-format', 'stream-json',
         '--mcp-config', configPath,
