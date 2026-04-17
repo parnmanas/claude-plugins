@@ -18,152 +18,30 @@
  * { "url": "https://awb.example.com:7700", "apiKey": "awb_..." }
  */
 
-import { readFileSync, existsSync, appendFileSync, mkdirSync, statSync, renameSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { promises as fsp } from 'fs';
 import { join, dirname } from 'path';
-import { homedir } from 'os';
 import { createInterface } from 'readline';
 import { spawn } from 'child_process';
 
-// ─── Constants ────────────────────────────────────────────
-
-const CONFIG_PATH = join(
-  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
-  'channels', 'awb', 'config.json',
-);
-const AGENT_PATH = join(
-  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
-  'channels', 'awb', 'agent.json',
-);
-const RECONNECT_INITIAL_MS = 2000;
-const RECONNECT_MAX_MS = 30000;
-const REQUEST_TIMEOUT_MS = 30000;
-const HEARTBEAT_INTERVAL_MS = 30_000;  // Phase 3 D-52 presence — must be < sweep's 90s threshold
-
-const CHANNEL_INSTRUCTIONS = [
-  'This server uses push-based event delivery via SSE.',
-  'You will receive <channel> events for all ticket activity:',
-  '  - type="agent_trigger": A trigger assigned to you — claim the ticket, read it, and process it.',
-  '  - type="board_update": A ticket was updated (comment added, status changed, field edited, etc.).',
-  'Do NOT poll or create cron jobs for get_pending_triggers or subscribe_events — events arrive automatically via push.',
-].join('\n');
-
-// ─── Delegation Constants (Phase 4 D-55..D-75) ────────────
-const SUBAGENTS_BASE_DIR = join(
-  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
-  'channels', 'awb', 'subagents',
-);
-const SUBAGENTS_PERSIST_PATH = join(
-  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
-  'channels', 'awb', 'subagents.json',
-);
-const DELEGATION_DEFAULTS = Object.freeze({
-  enabled: true,              // D-59: default-on; consumers still gated by Plan 04-03
-  maxConcurrent: 5,           // D-63
-  ttlMinutes: 15,             // D-67 (trigger subagents only)
-  claudeBin: 'claude',        // D-75 — overridable for test stubs
-  appendSystemPromptMode: 'role_only', // D-75 — reserved for Plan 04-03 prompt composition
-  // v0.7.0: persistent per-room chat subagents. When false, chat events spawn a
-  // fresh Claude CLI per message (legacy v0.6.x behavior) — rollback hatch.
-  persistentChatSessions: true,
-  persistentTicketSessions: true, // v0.8.0: persistent per-ticket subagents
-  idleMinutes: 10,            // session idle TTL before stdin is closed
-  maxTurnsPerSession: 30,     // soft respawn after N user turns to bound context growth
-});
-const TTL_SWEEP_INTERVAL_MS = 60_000;
-const SIGTERM_GRACE_MS = 5_000;
-const STOP_GRACE_MS = 2_000;
+import {
+  CONFIG_PATH,
+  AGENT_PATH,
+  RECONNECT_INITIAL_MS,
+  RECONNECT_MAX_MS,
+  REQUEST_TIMEOUT_MS,
+  HEARTBEAT_INTERVAL_MS,
+  CHANNEL_INSTRUCTIONS,
+  SUBAGENTS_BASE_DIR,
+  SUBAGENTS_PERSIST_PATH,
+  DELEGATION_DEFAULTS,
+  TTL_SWEEP_INTERVAL_MS,
+  SIGTERM_GRACE_MS,
+  STOP_GRACE_MS,
+} from './lib/constants.mjs';
+import { log, send, sendError, sendChannelEvent } from './lib/logging.mjs';
 
 // ─── Helpers ──────────────────────────────────────────────
-
-// ─── File logger ──────────────────────────────────────────
-// Persist logs to disk so crashes and exit causes survive the process.
-// Rotates at 5 MB by renaming to `.1` (single-gen rotation — cheap, no deps).
-
-const LOG_DIR = join(
-  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
-  'channels', 'awb',
-);
-const LOG_PATH = join(LOG_DIR, 'proxy.log');
-const LOG_MAX_BYTES = 5 * 1024 * 1024;
-
-try { mkdirSync(LOG_DIR, { recursive: true }); } catch { /* ignore */ }
-
-function writeLogLine(line) {
-  try {
-    const st = statSync(LOG_PATH);
-    if (st.size > LOG_MAX_BYTES) {
-      try { renameSync(LOG_PATH, LOG_PATH + '.1'); } catch { /* ignore */ }
-    }
-  } catch { /* file may not exist yet */ }
-  try { appendFileSync(LOG_PATH, line); } catch { /* disk full, readonly fs, etc. */ }
-}
-
-function log(msg) {
-  const line = `[${new Date().toISOString()}] [pid=${process.pid}] ${msg}\n`;
-  try { process.stderr.write(`[AWB] ${msg}\n`); } catch { /* ignore */ }
-  writeLogLine(line);
-}
-
-// ─── Crash / exit instrumentation ─────────────────────────
-// Claude CLI keeps MCP servers on stdio pipes; if anything pushes this process
-// toward exit we want the cause recorded. `exit` is sync-only, so the final
-// line is written via appendFileSync. SIGPIPE on stdout is handled explicitly
-// because an unhandled EPIPE kills Node by default.
-
-process.on('uncaughtException', (err) => {
-  log(`Uncaught error: ${err?.stack || err?.message || err}`);
-});
-process.on('unhandledRejection', (err) => {
-  log(`Unhandled rejection: ${err?.stack || err?.message || err}`);
-});
-process.on('exit', (code) => {
-  writeLogLine(`[${new Date().toISOString()}] [pid=${process.pid}] EXIT code=${code}\n`);
-});
-for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGPIPE']) {
-  process.on(sig, () => {
-    log(`Received ${sig}`);
-    if (sig !== 'SIGPIPE') process.exit(0);
-  });
-}
-process.stdout.on('error', (err) => {
-  log(`stdout error: code=${err?.code} msg=${err?.message} stack=${err?.stack?.split('\n')[1] || ''}`);
-  // EPIPE usually means Claude CLI closed its read end — no point staying up.
-  if (err?.code === 'EPIPE') process.exit(0);
-});
-process.stderr.on('error', () => { /* swallow; stderr loss is non-fatal */ });
-
-// DIAG v0.6.9: trace stdin lifecycle — fires BEFORE rl.on('close') so we can see
-// whether Claude CLI sent any final line or just dropped the pipe silently.
-process.stdin.on('end', () => log('[DIAG] stdin end event (EOF from Claude CLI)'));
-process.stdin.on('error', (err) => log(`[DIAG] stdin error: code=${err?.code} msg=${err?.message}`));
-process.stdin.on('close', () => log('[DIAG] stdin close event'));
-
-function send(obj) {
-  const payload = JSON.stringify(obj) + '\n';
-  // DIAG v0.6.9: record every outbound write so we can correlate with stdin close.
-  // method + id/params-type + byte length; truncate content to keep log small.
-  try {
-    const method = obj?.method || (obj?.error ? 'error' : obj?.result ? 'result' : '?');
-    const metaType = obj?.params?.meta?.type ?? '';
-    log(`[DIAG] stdout.write method=${method} metaType=${metaType} bytes=${Buffer.byteLength(payload)}`);
-  } catch { /* ignore diag failure */ }
-  const ok = process.stdout.write(payload);
-  if (!ok) log('[DIAG] stdout.write returned false (backpressure)');
-}
-
-function sendError(id, code, message) {
-  send({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
-}
-
-/** Send a channel notification to Claude — the core delivery mechanism */
-function sendChannelEvent(content, meta = {}) {
-  send({
-    jsonrpc: '2.0',
-    method: 'notifications/claude/channel',
-    params: { content, meta },
-  });
-}
 
 function loadConfig() {
   if (!existsSync(CONFIG_PATH)) return null;
