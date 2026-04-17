@@ -103,6 +103,49 @@ export function composeChatPrompt(rolePrompt, history, newMessage) {
 }
 
 /**
+ * Compose the task text for a comment-mention subagent spawn (no live ticket session).
+ * Pure function — same role_prompt-injection contract as the other composers.
+ *
+ * The prompt leads with an explicit "this is addressed to YOU" banner because
+ * the whole point of the mention feature is to disambiguate direct requests
+ * from ambient comment activity.
+ */
+export function composeCommentMentionPrompt(ticket, rolePrompt, mention, fallbackTicketId) {
+  const lines = [];
+  lines.push('⚠️ You were @-mentioned in a comment. This message is addressed to YOU specifically — respond directly.');
+  lines.push('');
+  if (mention.actor_name) {
+    lines.push(`Mentioned by: ${mention.actor_name}`);
+  }
+  if (mention.mention_source === 'role' && mention.role_shortcut) {
+    lines.push(`Via role shortcut: @${mention.role_shortcut}`);
+  }
+  lines.push('');
+  if (ticket) {
+    lines.push(`Ticket ID: ${ticket.id}`);
+    if (ticket.title) lines.push(`Title: ${ticket.title}`);
+    if (ticket.description) {
+      lines.push('');
+      lines.push('Description:');
+      lines.push(ticket.description);
+    }
+  } else {
+    lines.push(`Ticket ID: ${fallbackTicketId || mention.ticket_id || 'unknown'}`);
+    lines.push('(Fresh ticket context fetch failed — using the mention payload only.)');
+  }
+  lines.push('');
+  lines.push('Comment body addressed to you:');
+  lines.push(mention.content || '');
+  lines.push('');
+  lines.push('Instructions:');
+  lines.push('- Read the comment and respond to the request directly.');
+  lines.push('- Use AWB MCP tools (mcp__awb__*) to take action if the comment asks for work.');
+  lines.push('- Leave a reply comment on the ticket addressing the user who mentioned you.');
+  lines.push('- Do NOT ignore this — the comment is explicitly addressed to you via @-mention.');
+  return lines.join('\n');
+}
+
+/**
  * Compose the task text for a chat room message subagent. Pure function.
  * `history` is recent messages (chronological); `newMessage` is the incoming message.
  * role_prompt is injected via --append-system-prompt (not here).

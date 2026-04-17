@@ -63,6 +63,33 @@ export class TicketSessionManager extends BaseSessionManager {
   }
 
   /**
+   * Forward a comment_mention event to an existing ticket session.
+   * Unlike forwardBoardUpdate, this leads with a strong "addressed to YOU"
+   * banner so the session's next turn treats the comment as a direct request
+   * rather than ambient activity.
+   * Returns true if delivered, false if no live session exists for this ticket.
+   */
+  forwardCommentMention(ticketId, mention) {
+    const sess = this._getSession(ticketId);
+    if (!sess) return false;
+
+    const lines = [];
+    lines.push('⚠️ [Comment Mention] You were @-mentioned in a comment on this ticket. This is addressed to YOU — respond directly.');
+    if (mention.actor_name) lines.push(`  By: ${mention.actor_name}`);
+    if (mention.mention_source === 'role' && mention.role_shortcut) {
+      lines.push(`  Via role shortcut: @${mention.role_shortcut}`);
+    }
+    lines.push('');
+    lines.push('Comment body:');
+    lines.push(mention.content || '');
+    lines.push('');
+    lines.push('Read the comment and respond to the request directly. Use mcp__awb__get_ticket if you need fresh ticket state, and leave a reply comment addressing the user.');
+
+    this._sendFollowUp(sess, lines.join('\n'), { checkMaxTurns: false });
+    return true;
+  }
+
+  /**
    * Forward a board_update event to an existing ticket session.
    * Returns true if delivered, false if no live session exists for this ticket.
    */

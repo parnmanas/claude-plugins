@@ -21,6 +21,7 @@ import {
   composeTriggerPrompt,
   composeChatPrompt,
   composeChatRoomPrompt,
+  composeCommentMentionPrompt,
 } from './prompts.mjs';
 
 export class EventDispatcher {
@@ -55,6 +56,7 @@ export class EventDispatcher {
       case 'board_update':       return this.handleBoardUpdate(raw);
       case 'chat_request':       return this.handleChatRequest(raw);
       case 'chat_room_message':  return this.handleChatRoomMessage(raw);
+      case 'comment_mention':    return this.handleCommentMention(raw);
       default: return; // silently drop unknown event types (e.g. agent_typing)
     }
   }
@@ -267,6 +269,99 @@ export class EventDispatcher {
       },
     );
     log(`Chat request forwarded (fallback path): agent=${payload.agent_id} user=${payload.user_id}`);
+  }
+
+  /**
+   * Handle a comment-mention event. Unlike board_update (which is ambient
+   * "something changed on the ticket" noise), a comment_mention event means
+   * the currently-connected agent was directly @-mentioned in a user comment.
+   *
+   * Dispatch order:
+   *   1. Live ticket session → forwardCommentMention (stays in-context, cheap)
+   *   2. Otherwise → one-shot subagent spawn with explicit "addressed to YOU" prompt
+   *   3. Last resort → main-session sendChannelEvent notification
+   *
+   * The server already filtered this event to the mentioned agent, so there
+   * is no local filter step here.
+   */
+  async handleCommentMention(raw) {
+    let ev;
+    try {
+      ev = JSON.parse(raw);
+    } catch (err) {
+      log(`Failed to parse comment_mention: ${err.message}`);
+      return;
+    }
+
+    // Server flattens fields to top level (see event-registry.ts).
+    const ticketId = ev.ticket_id || '';
+    const commentId = ev.comment_id || ev.field_changed || '';
+    const agentId = ev.agent_id || ev.actor_name || '';
+    const mention = {
+      ticket_id: ticketId,
+      comment_id: commentId,
+      actor_name: ev.actor_name || '',
+      actor_id: ev.actor_id || '',
+      content: ev.content || '',
+      mention_source: ev.mention_source || 'direct',
+      role_shortcut: ev.role_shortcut || '',
+    };
+
+    const delegationEnabled = this.#config?.delegation?.enabled !== false;
+    const persistentTicket = this.#config?.delegation?.persistentTicketSessions !== false;
+
+    // Path 1 — live ticket session
+    if (delegationEnabled && persistentTicket && this.#ticketSessionManager && ticketId) {
+      try {
+        const forwarded = this.#ticketSessionManager.forwardCommentMention(ticketId, mention);
+        if (forwarded) {
+          log(`Comment mention forwarded to ticket session: ticket=${ticketId} comment=${commentId}`);
+          return;
+        }
+      } catch (err) {
+        log(`Ticket session forward failed for comment_mention: ${err.message}`);
+      }
+    }
+
+    // Path 2 — one-shot subagent spawn
+    const canDelegate = delegationEnabled && this.#subagentManager && this.#subagentManager.canSpawn();
+    if (canDelegate) {
+      try {
+        const ticket = ticketId ? await fetchTicketContext(this.#config, ticketId) : null;
+        const rolePrompt = ev.role_prompt || '';
+        const taskText = composeCommentMentionPrompt(ticket, rolePrompt, mention, ticketId);
+
+        const result = await this.#subagentManager.spawn({
+          kind: 'trigger',
+          taskText,
+          rolePrompt,
+          triggerId: `mention:${commentId}`,
+          ticketId,
+          agentId,
+        });
+        if (result.spawned) {
+          log(`Comment mention dispatched to subagent: ticket=${ticketId} comment=${commentId} pid=${result.pid}`);
+          return;
+        }
+        log(`Comment mention subagent spawn declined (${result.reason}), falling back to main session`);
+      } catch (err) {
+        log(`Comment mention delegation failed: ${err.message}, falling back to main session`);
+      }
+    }
+
+    // Path 3 — main-session fallback
+    sendChannelEvent(
+      `[AWB Mention] ⚠️ You were @-mentioned on ticket=${ticketId} by ${mention.actor_name || 'user'}: "${(mention.content || '').slice(0, 120)}"`,
+      {
+        type: 'comment_mention',
+        ticket_id: ticketId,
+        comment_id: commentId,
+        actor_name: mention.actor_name,
+        content: mention.content,
+        timestamp: ev.timestamp || new Date().toISOString(),
+      },
+    );
+    log(`Comment mention forwarded (fallback path): ticket=${ticketId} comment=${commentId}`);
   }
 
   handleBoardUpdate(raw) {
