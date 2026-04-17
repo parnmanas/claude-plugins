@@ -1,0 +1,274 @@
+// ─── Base Session Manager ─────────────────────────────────
+// Shared lifecycle skeleton for persistent per-key Claude CLI children.
+// ChatSessionManager (key = roomId) and TicketSessionManager (key = ticketId)
+// both extend this class.
+//
+// The base class owns:
+//   - the #sessions Map, cap enforcement + LRU eviction
+//   - spawn (mcp-config creation, CLI args, child.spawn, wireStdio/wireExit)
+//   - writeTurn / resetIdleTimer / maxTurns respawn trigger
+//   - bounded dedup set+queue helpers
+//   - graceful stop() (SIGTERM → grace → SIGKILL)
+//
+// Subclasses customise per-kind behaviour via:
+//   - constructor options { keyField, logTag, cfgPrefix, kindLabel }
+//   - their own dispatch*() public methods that call this.spawnSession()
+//     and this.writeTurnToSession() after composing the turn text.
+//
+// There is no ECMA "protected"; members that subclasses may touch are exposed
+// as regular (non-#) methods prefixed with `_` and documented here. Private
+// state stays behind `#`.
+
+import { promises as fsp } from 'fs';
+import { join, dirname } from 'path';
+import { createInterface } from 'readline';
+import { spawn } from 'child_process';
+import { SUBAGENTS_BASE_DIR, STOP_GRACE_MS } from './constants.mjs';
+import { log } from './logging.mjs';
+
+export class BaseSessionManager {
+  #config;
+  #sessions = new Map();           // sessionKey → session record
+  #dedupSet = new Set();
+  #dedupQueue = [];
+  #DEDUP_MAX = 200;
+
+  // Subclass-injected descriptors, set in constructor.
+  #keyField;    // e.g. 'roomId' | 'ticketId' — field name on session records
+  #logTag;      // e.g. '[chat-session]' | '[ticket-session]' — prefix for internal logs
+  #cfgPrefix;   // e.g. 'cfg-chat-' | 'cfg-ticket-' — mcp-config tempfile name prefix
+  #kindLabel;   // e.g. 'chat_session' | 'ticket_session' — spawn log kind=
+
+  /**
+   * @param {object} config delegation config (config.delegation.*)
+   * @param {object} options subclass descriptors
+   * @param {string} options.keyField   session record field naming the key ('roomId' | 'ticketId')
+   * @param {string} options.logTag     log-line prefix ('[chat-session]' | '[ticket-session]')
+   * @param {string} options.cfgPrefix  mcp-config tempfile prefix ('cfg-chat-' | 'cfg-ticket-')
+   * @param {string} options.kindLabel  spawn-log kind value ('chat_session' | 'ticket_session')
+   */
+  constructor(config, options) {
+    this.#config = config;
+    this.#keyField = options.keyField;
+    this.#logTag = options.logTag;
+    this.#cfgPrefix = options.cfgPrefix;
+    this.#kindLabel = options.kindLabel;
+  }
+
+  // ─── Read-only accessors for subclasses ────────────────────────
+  get _config() { return this.#config; }
+  get _sessions() { return this.#sessions; }
+
+  /** Return the live session for a key, or undefined. */
+  _getSession(sessionKey) {
+    return this.#sessions.get(sessionKey);
+  }
+
+  /**
+   * Ensure there is capacity for a new session. LRU-evict oldest-idle on
+   * overflow. Returns true when a new session may be spawned.
+   */
+  _ensureCapacity() {
+    const cap = this.#config.delegation.maxConcurrent ?? 5;
+    if (this.#sessions.size < cap) return true;
+    return this.#evictLru();
+  }
+
+  /**
+   * Spawn a new Claude CLI child bound to `sessionKey`. Seeds it with
+   * `firstTurnText`. Registers the session on success and returns the record.
+   * Returns null on spawn failure (caller decides what to do).
+   */
+  async _spawnSession(sessionKey, rolePrompt, firstTurnText) {
+    let configPath = null;
+    try {
+      configPath = join(
+        SUBAGENTS_BASE_DIR,
+        `${this.#cfgPrefix}${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+      );
+      await fsp.mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
+      const mcpConfig = {
+        mcpServers: {
+          awb: {
+            type: 'http',
+            url: `${this.#config.url.replace(/\/$/, '')}/mcp`,
+            headers: { Authorization: `Bearer ${this.#config.apiKey}` },
+          },
+        },
+      };
+      await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
+
+      const args = [
+        '--verbose',
+        '--input-format', 'stream-json',
+        '--output-format', 'stream-json',
+        '--mcp-config', configPath,
+        '--strict-mcp-config',
+        '--allowedTools', 'mcp__awb__*',
+        '--append-system-prompt', rolePrompt || '',
+        '--dangerously-skip-permissions',
+      ];
+      const child = spawn(this.#config.delegation.claudeBin, args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: true,
+        env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
+      });
+      child.unref();
+
+      if (!child.pid) {
+        await fsp.unlink(configPath).catch(() => {});
+        return null;
+      }
+
+      const sess = {
+        [this.#keyField]: sessionKey,
+        pid: child.pid,
+        child,
+        configPath,
+        turnCount: 0,
+        startedAt: Date.now(),
+        lastTouchedAt: Date.now(),
+        idleTimer: null,
+      };
+      this.#wireStdio(sess);
+      this.#wireExit(sess);
+
+      log(`Subagent spawned: pid=${sess.pid} kind=${this.#kindLabel} ${this.#keyField}=${sessionKey}`);
+
+      this._writeTurn(sess, firstTurnText);
+      sess.turnCount = 1;
+      this._resetIdleTimer(sess);
+      this.#sessions.set(sessionKey, sess);
+      return sess;
+    } catch (err) {
+      log(`${this.#logTag} spawn error ${this.#keyField}=${sessionKey}: ${err.message}`);
+      if (configPath) await fsp.unlink(configPath).catch(() => {});
+      return null;
+    }
+  }
+
+  /**
+   * Stream one user turn into an existing session's stdin, bump bookkeeping
+   * counters, and (when checkMaxTurns is true) trigger stdin.end() once the
+   * turn budget is exhausted. Callers handle dedup + the kind-specific turn
+   * text composition before invoking this.
+   *
+   * `checkMaxTurns` defaults to true (the common case: fresh user/trigger
+   * turn). Pass false for passive notifications (e.g. ticket board_update
+   * forwards) that should not cause a respawn.
+   */
+  _sendFollowUp(sess, turnText, { checkMaxTurns = true } = {}) {
+    this._writeTurn(sess, turnText);
+    sess.turnCount++;
+    sess.lastTouchedAt = Date.now();
+    this._resetIdleTimer(sess);
+    if (!checkMaxTurns) return;
+    const maxTurns = this.#config.delegation.maxTurnsPerSession ?? 30;
+    if (sess.turnCount >= maxTurns) {
+      log(`${this.#logTag} ${this.#keyField}=${sess[this.#keyField]} hit maxTurns=${maxTurns}, closing stdin for respawn`);
+      try { sess.child.stdin.end(); } catch { /* already closed */ }
+    }
+  }
+
+  _writeTurn(sess, text) {
+    const obj = {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: String(text) }] },
+    };
+    try {
+      sess.child.stdin.write(JSON.stringify(obj) + '\n');
+      log(`${this.#logTag} dispatched turn ${this.#keyField}=${sess[this.#keyField]} pid=${sess.pid} turn=${sess.turnCount + 1} bytes=${Buffer.byteLength(text)}`);
+    } catch (err) {
+      log(`${this.#logTag} stdin write failed pid=${sess.pid}: ${err.message}`);
+    }
+  }
+
+  #wireStdio(sess) {
+    if (sess.child.stdout) {
+      const rlOut = createInterface({ input: sess.child.stdout });
+      const tag = this.#logTag.replace(/^\[|\]$/g, '');
+      rlOut.on('line', (line) => {
+        // stream-json: one JSON object per line. Log result events; everything
+        // else (assistant/system/tool_use) gets a terse line for debugging.
+        try {
+          const obj = JSON.parse(line);
+          if (obj?.type === 'result') {
+            log(`[${tag}:${sess.pid}] result subtype=${obj.subtype || '-'} is_error=${obj.is_error ?? '-'}`);
+          }
+        } catch { /* non-JSON; ignore */ }
+      });
+    }
+    if (sess.child.stderr) {
+      const rlErr = createInterface({ input: sess.child.stderr });
+      const tag = this.#logTag.replace(/^\[|\]$/g, '');
+      rlErr.on('line', (line) => log(`[${tag}:${sess.pid}:err] ${line}`));
+    }
+  }
+
+  #wireExit(sess) {
+    sess.child.once('exit', async (code, signal) => {
+      if (sess.idleTimer) { clearTimeout(sess.idleTimer); sess.idleTimer = null; }
+      const durationSec = Math.round((Date.now() - sess.startedAt) / 1000);
+      const key = sess[this.#keyField];
+      log(`${this.#logTag} exit pid=${sess.pid} ${this.#keyField}=${key} code=${code} signal=${signal || '-'} turns=${sess.turnCount} duration=${durationSec}s`);
+      if (this.#sessions.get(key) === sess) this.#sessions.delete(key);
+      if (sess.configPath) {
+        try { await fsp.unlink(sess.configPath); } catch { /* best-effort */ }
+      }
+    });
+    sess.child.once('error', (err) => log(`${this.#logTag} child error pid=${sess.pid}: ${err.message}`));
+  }
+
+  _resetIdleTimer(sess) {
+    if (sess.idleTimer) clearTimeout(sess.idleTimer);
+    const mins = this.#config.delegation.idleMinutes ?? 10;
+    sess.idleTimer = setTimeout(() => {
+      log(`${this.#logTag} idle, closing stdin ${this.#keyField}=${sess[this.#keyField]} pid=${sess.pid}`);
+      try { sess.child.stdin.end(); } catch { /* already closed */ }
+    }, mins * 60_000);
+    if (typeof sess.idleTimer.unref === 'function') sess.idleTimer.unref();
+  }
+
+  #evictLru() {
+    let oldestKey = null;
+    let oldest = Infinity;
+    for (const [k, s] of this.#sessions.entries()) {
+      if (s.lastTouchedAt < oldest) { oldest = s.lastTouchedAt; oldestKey = k; }
+    }
+    if (!oldestKey) return false;
+    const s = this.#sessions.get(oldestKey);
+    log(`${this.#logTag} evicting lru ${this.#keyField}=${oldestKey} pid=${s.pid}`);
+    if (s.idleTimer) { clearTimeout(s.idleTimer); s.idleTimer = null; }
+    try { s.child.stdin.end(); } catch { /* already closed */ }
+    this.#sessions.delete(oldestKey);
+    return true;
+  }
+
+  /** Bounded dedup: returns true when key was newly remembered, false if duplicate. */
+  _rememberDedup(key) {
+    if (this.#dedupSet.has(key)) return false;
+    this.#dedupSet.add(key);
+    this.#dedupQueue.push(key);
+    while (this.#dedupQueue.length > this.#DEDUP_MAX) {
+      const old = this.#dedupQueue.shift();
+      this.#dedupSet.delete(old);
+    }
+    return true;
+  }
+
+  async stop() {
+    const sessions = Array.from(this.#sessions.values());
+    for (const sess of sessions) {
+      if (sess.idleTimer) { clearTimeout(sess.idleTimer); sess.idleTimer = null; }
+      try { sess.child.stdin.end(); } catch { /* ignore */ }
+      try { process.kill(sess.pid, 'SIGTERM'); } catch { /* dead */ }
+    }
+    if (sessions.length === 0) { this.#sessions.clear(); return; }
+    await new Promise((r) => setTimeout(r, STOP_GRACE_MS));
+    for (const sess of sessions) {
+      try { process.kill(sess.pid, 'SIGKILL'); } catch { /* gone */ }
+    }
+    this.#sessions.clear();
+    log(`${this.constructor.name} stopped (terminated ${sessions.length} sessions)`);
+  }
+}
