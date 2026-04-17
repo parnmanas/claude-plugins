@@ -27,7 +27,7 @@ export class TicketSessionManager extends BaseSessionManager {
 
   /**
    * Dispatch a trigger into the ticket's live session, spawning one if needed.
-   * spec = { ticketId, triggerId, agentId, rolePrompt, ticketPrompt, ticket }
+   * spec = { ticketId, triggerId, agentId, rolePrompt, ticketPrompt, columnPrompt, ticket }
    * Returns { dispatched: boolean, pid?: number, reason?: string, firstTurn?: boolean }
    */
   async dispatchTrigger(spec) {
@@ -55,7 +55,7 @@ export class TicketSessionManager extends BaseSessionManager {
     }
 
     const firstTurnText = composeTriggerPrompt(
-      spec.ticket, spec.rolePrompt || '', spec.ticketPrompt || '', spec.ticketId,
+      spec.ticket, spec.rolePrompt || '', spec.ticketPrompt || '', spec.ticketId, spec.columnPrompt || null,
     );
     const spawned = await this._spawnSession(spec.ticketId, spec.rolePrompt || '', firstTurnText);
     if (!spawned) return { dispatched: false, reason: 'spawn_failed' };
@@ -85,6 +85,11 @@ export class TicketSessionManager extends BaseSessionManager {
   #composeTriggerTurn(spec) {
     const lines = [];
     lines.push(`[New Trigger] A new trigger arrived for the ticket you are already working on.`);
+    if (spec.columnPrompt && spec.columnPrompt.content) {
+      lines.push('');
+      lines.push(`Column workflow guide (${spec.columnPrompt.name || 'column_prompt'}):`);
+      lines.push(spec.columnPrompt.content);
+    }
     if (spec.ticketPrompt) {
       lines.push('');
       lines.push('Updated instructions:');

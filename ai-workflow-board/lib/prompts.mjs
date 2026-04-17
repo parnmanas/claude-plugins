@@ -13,7 +13,7 @@
  * - role_prompt is injected separately via --append-system-prompt (NOT here).
  * Produces the POSITIONAL prompt arg passed as the last argv to `claude --print`.
  */
-export function composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, fallbackTicketId) {
+export function composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, fallbackTicketId, columnPrompt) {
   const lines = [];
   lines.push('You are an AWB subagent responding to an assigned trigger.');
   lines.push('');
@@ -24,6 +24,11 @@ export function composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, fallbackT
       lines.push('');
       lines.push('Description:');
       lines.push(ticket.description);
+    }
+    if (columnPrompt && columnPrompt.content) {
+      lines.push('');
+      lines.push(`Column workflow guide (${columnPrompt.name || 'column_prompt'}):`);
+      lines.push(columnPrompt.content);
     }
     if (ticketPrompt) {
       lines.push('');
@@ -48,6 +53,11 @@ export function composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, fallbackT
   } else {
     lines.push(`Ticket ID: ${fallbackTicketId || 'unknown'}`);
     lines.push('(Fresh ticket context fetch failed — using embedded trigger payload only.)');
+    if (columnPrompt && columnPrompt.content) {
+      lines.push('');
+      lines.push(`Column workflow guide (${columnPrompt.name || 'column_prompt'}):`);
+      lines.push(columnPrompt.content);
+    }
     if (ticketPrompt) {
       lines.push('');
       lines.push('Ticket instructions:');

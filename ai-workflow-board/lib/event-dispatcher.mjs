@@ -86,6 +86,7 @@ export class EventDispatcher {
         const ticket = await fetchTicketContext(this.#config, ev.ticket_id);
         const rolePrompt = ev.role_prompt || '';
         const ticketPrompt = ev.ticket_prompt || '';
+        const columnPrompt = ev.column_prompt || null;
 
         const result = await this.#ticketSessionManager.dispatchTrigger({
           ticketId: ev.ticket_id || '',
@@ -93,6 +94,7 @@ export class EventDispatcher {
           agentId: ev.actor_name || '',
           rolePrompt,
           ticketPrompt,
+          columnPrompt,
           ticket,
         });
 
@@ -118,7 +120,8 @@ export class EventDispatcher {
         const ticket = await fetchTicketContext(this.#config, ev.ticket_id);
         const rolePrompt = ev.role_prompt || '';
         const ticketPrompt = ev.ticket_prompt || '';
-        const taskText = composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, ev.ticket_id);
+        const columnPrompt = ev.column_prompt || null;
+        const taskText = composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, ev.ticket_id, columnPrompt);
 
         const result = await this.#subagentManager.spawn({
           kind: 'trigger',
