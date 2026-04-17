@@ -38,6 +38,7 @@ import { EventStream } from './lib/event-stream.mjs';
 import { SubagentManager } from './lib/subagent-manager.mjs';
 import { ChatSessionManager } from './lib/chat-session-manager.mjs';
 import { TicketSessionManager } from './lib/ticket-session-manager.mjs';
+import { uploadIfNewErrors } from './lib/error-log-uploader.mjs';
 
 // ─── MCP Proxy ────────────────────────────────────────────
 
@@ -146,6 +147,7 @@ function runProxy(rl, config) {
   let resolvedAgentId = null;
   const agentIdReady = resolveAgentId(config).then((id) => { resolvedAgentId = id; return id; });
   const presenceHeartbeat = { _real: null };
+  let uploadTimer = null;
 
   // Phase 4 Plan 04-02: instantiate SubagentManager. Plan 04-03 now wires #handleTrigger
   // and #handleChatRequest consumers + the onExit completion notification below.
@@ -180,6 +182,7 @@ function runProxy(rl, config) {
   const shutdownHandler = async (signal) => {
     log(`Proxy received ${signal} — terminating subagents`);
     presenceHeartbeat._real?.stop();
+    if (uploadTimer) { clearInterval(uploadTimer); uploadTimer = null; }
     eventStream?.stop();
     try { await subagentManager.stop(); } catch (err) { log(`shutdown: ${err.message}`); }
     try { await chatSessionManager.stop(); } catch (err) { log(`shutdown (chat): ${err.message}`); }
@@ -230,6 +233,13 @@ function runProxy(rl, config) {
         agentIdReady.then((agentId) => {
           presenceHeartbeat._real = new PresenceHeartbeat(config, agentId);
           presenceHeartbeat._real.start();
+          // v0.11.0: ship accumulated proxy.log errors so admins can see
+          // per-agent failures in AWB's web UI. Fire-and-forget + 10-min tick.
+          uploadIfNewErrors(config, agentId, '0.11.0').catch(() => {});
+          uploadTimer = setInterval(() => {
+            uploadIfNewErrors(config, agentId, '0.11.0').catch(() => {});
+          }, 10 * 60 * 1000);
+          if (typeof uploadTimer.unref === 'function') uploadTimer.unref();
         });
         log('SSE event stream started (post-handshake)');
       }
