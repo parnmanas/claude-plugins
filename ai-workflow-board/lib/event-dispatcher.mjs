@@ -70,6 +70,18 @@ export class EventDispatcher {
       return;
     }
 
+    // Defensive filter: the server now recipient-scopes agent_trigger by
+    // scope.agent_id, so a correctly-behaving stream only delivers triggers
+    // meant for THIS agent. This guard drops any stray cross-agent delivery
+    // if the server-side filter ever regresses again. agent_trigger is
+    // flattened, so actor_name carries the target agent_id on the wire.
+    const selfAgentId = loadAgentInfo()?.agent_id || '';
+    const eventAgentId = ev.actor_name || ev.agent_id || '';
+    if (selfAgentId && eventAgentId && selfAgentId !== eventAgentId) {
+      log(`Trigger dropped (not for this agent): target=${eventAgentId} self=${selfAgentId}`);
+      return;
+    }
+
     // Phase 1 flatten-on-emit asymmetry: agent_trigger reads TOP-LEVEL fields
     // (ev.role_prompt, ev.ticket_prompt, ev.ticket_id, ev.field_changed, ev.actor_name).
     // In contrast, chat_request is envelope-native and reads ev.payload.* — see
