@@ -6,7 +6,8 @@ import { createInterface } from 'readline';
 import { spawn } from 'child_process';
 import { SUBAGENTS_BASE_DIR, STOP_GRACE_MS } from './constants.mjs';
 import { log } from './logging.mjs';
-import { fetchChatRoomHistory, composeChatRoomPrompt } from './utils.mjs';
+import { fetchChatRoomHistory } from './rest.mjs';
+import { composeChatRoomPrompt } from './prompts.mjs';
 
 /**
  * Keeps one Claude CLI child alive per chat room so that successive messages

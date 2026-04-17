@@ -6,7 +6,7 @@ import { createInterface } from 'readline';
 import { spawn } from 'child_process';
 import { SUBAGENTS_BASE_DIR, STOP_GRACE_MS } from './constants.mjs';
 import { log } from './logging.mjs';
-import { composeTriggerPrompt } from './utils.mjs';
+import { composeTriggerPrompt } from './prompts.mjs';
 
 /**
  * Keeps one Claude CLI child alive per ticket so that successive events

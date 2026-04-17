@@ -3,13 +3,12 @@
 import { RECONNECT_INITIAL_MS, RECONNECT_MAX_MS } from './constants.mjs';
 import { log, sendChannelEvent } from './logging.mjs';
 import { loadAgentInfo } from './config.mjs';
+import { fetchTicketContext, fetchChatRoomHistory } from './rest.mjs';
 import {
-  fetchTicketContext,
   composeTriggerPrompt,
   composeChatPrompt,
-  fetchChatRoomHistory,
   composeChatRoomPrompt,
-} from './utils.mjs';
+} from './prompts.mjs';
 
 /**
  * Connect to AWB's SSE /api/events/stream and forward ticket events

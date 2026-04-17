@@ -27,13 +27,12 @@ import {
 } from './lib/constants.mjs';
 import { log, send, sendError } from './lib/logging.mjs';
 import { loadConfig, resolveAgentId } from './lib/config.mjs';
+import { fetchTicketContext, fetchChatRoomHistory } from './lib/rest.mjs';
 import {
-  fetchTicketContext,
   composeTriggerPrompt,
   composeChatPrompt,
-  fetchChatRoomHistory,
   composeChatRoomPrompt,
-} from './lib/utils.mjs';
+} from './lib/prompts.mjs';
 import { PresenceHeartbeat } from './lib/presence-heartbeat.mjs';
 import { EventStream } from './lib/event-stream.mjs';
 import { SubagentManager } from './lib/subagent-manager.mjs';
