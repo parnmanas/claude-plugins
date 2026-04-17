@@ -78,8 +78,15 @@ export class BaseSessionManager {
    * Spawn a new Claude CLI child bound to `sessionKey`. Seeds it with
    * `firstTurnText`. Registers the session on success and returns the record.
    * Returns null on spawn failure (caller decides what to do).
+   *
+   * `options.onProgress(stage)` is invoked as the subagent advances through
+   * the turn:
+   *   - 'thinking'  — first stdout line received (subagent has the message)
+   *   - 'composing' — first assistant content emitted (writing the reply)
+   * It is also re-invoked every 10s with the latest stage so callers can
+   * refresh client-side typing indicators that auto-expire.
    */
-  async _spawnSession(sessionKey, rolePrompt, firstTurnText) {
+  async _spawnSession(sessionKey, rolePrompt, firstTurnText, { onProgress } = {}) {
     let configPath = null;
     try {
       configPath = join(
@@ -135,6 +142,7 @@ export class BaseSessionManager {
 
       log(`Subagent spawned: pid=${sess.pid} kind=${this.#kindLabel} ${this.#keyField}=${sessionKey}`);
 
+      this.#startTurn(sess, onProgress);
       this._writeTurn(sess, firstTurnText);
       sess.turnCount = 1;
       this._resetIdleTimer(sess);
@@ -157,7 +165,8 @@ export class BaseSessionManager {
    * turn). Pass false for passive notifications (e.g. ticket board_update
    * forwards) that should not cause a respawn.
    */
-  _sendFollowUp(sess, turnText, { checkMaxTurns = true } = {}) {
+  _sendFollowUp(sess, turnText, { checkMaxTurns = true, onProgress } = {}) {
+    this.#startTurn(sess, onProgress);
     this._writeTurn(sess, turnText);
     sess.turnCount++;
     sess.lastTouchedAt = Date.now();
@@ -167,6 +176,63 @@ export class BaseSessionManager {
     if (sess.turnCount >= maxTurns) {
       log(`${this.#logTag} ${this.#keyField}=${sess[this.#keyField]} hit maxTurns=${maxTurns}, closing stdin for respawn`);
       try { sess.child.stdin.end(); } catch { /* already closed */ }
+    }
+  }
+
+  // ─── Turn progress (drives client typing indicators) ───────────
+  // A "turn" is one user message → subagent → response cycle. The base class
+  // tracks the in-flight turn so it can fire onProgress callbacks when the
+  // subagent acknowledges the input ('thinking') and starts producing
+  // assistant content ('composing'). A 10s heartbeat re-fires the latest
+  // stage so client-side typing indicators (which self-expire after ~15s)
+  // stay visible across long subagent runs.
+
+  #startTurn(sess, onProgress) {
+    this.#endTurn(sess);
+    if (typeof onProgress !== 'function') return;
+    const turn = {
+      onProgress,
+      stage: null, // 'thinking' | 'composing'
+      fired: { thinking: false, composing: false },
+      heartbeatTimer: null,
+    };
+    sess._currentTurn = turn;
+    turn.heartbeatTimer = setInterval(() => {
+      if (sess._currentTurn === turn && turn.stage) {
+        try { turn.onProgress(turn.stage); } catch (err) {
+          log(`${this.#logTag} onProgress heartbeat error: ${err.message}`);
+        }
+      }
+    }, 10_000);
+    if (typeof turn.heartbeatTimer.unref === 'function') turn.heartbeatTimer.unref();
+  }
+
+  #endTurn(sess) {
+    const turn = sess._currentTurn;
+    if (!turn) return;
+    if (turn.heartbeatTimer) clearInterval(turn.heartbeatTimer);
+    sess._currentTurn = null;
+  }
+
+  #advanceTurn(sess, parsedLine) {
+    const turn = sess._currentTurn;
+    if (!turn) return;
+    if (!turn.fired.thinking) {
+      turn.fired.thinking = true;
+      turn.stage = 'thinking';
+      try { turn.onProgress('thinking'); } catch (err) {
+        log(`${this.#logTag} onProgress(thinking) error: ${err.message}`);
+      }
+    }
+    if (!turn.fired.composing && parsedLine?.type === 'assistant') {
+      turn.fired.composing = true;
+      turn.stage = 'composing';
+      try { turn.onProgress('composing'); } catch (err) {
+        log(`${this.#logTag} onProgress(composing) error: ${err.message}`);
+      }
+    }
+    if (parsedLine?.type === 'result') {
+      this.#endTurn(sess);
     }
   }
 
@@ -188,14 +254,14 @@ export class BaseSessionManager {
       const rlOut = createInterface({ input: sess.child.stdout });
       const tag = this.#logTag.replace(/^\[|\]$/g, '');
       rlOut.on('line', (line) => {
-        // stream-json: one JSON object per line. Log result events; everything
-        // else (assistant/system/tool_use) gets a terse line for debugging.
-        try {
-          const obj = JSON.parse(line);
-          if (obj?.type === 'result') {
-            log(`[${tag}:${sess.pid}] result subtype=${obj.subtype || '-'} is_error=${obj.is_error ?? '-'}`);
-          }
-        } catch { /* non-JSON; ignore */ }
+        // stream-json: one JSON object per line. First line of a turn drives
+        // the 'thinking' progress fire; first assistant line drives 'composing'.
+        let obj = null;
+        try { obj = JSON.parse(line); } catch { /* non-JSON; skip */ }
+        this.#advanceTurn(sess, obj);
+        if (obj?.type === 'result') {
+          log(`[${tag}:${sess.pid}] result subtype=${obj.subtype || '-'} is_error=${obj.is_error ?? '-'}`);
+        }
       });
     }
     if (sess.child.stderr) {
@@ -208,6 +274,7 @@ export class BaseSessionManager {
   #wireExit(sess) {
     sess.child.once('exit', async (code, signal) => {
       if (sess.idleTimer) { clearTimeout(sess.idleTimer); sess.idleTimer = null; }
+      this.#endTurn(sess);
       const durationSec = Math.round((Date.now() - sess.startedAt) / 1000);
       const key = sess[this.#keyField];
       log(`${this.#logTag} exit pid=${sess.pid} ${this.#keyField}=${key} code=${code} signal=${signal || '-'} turns=${sess.turnCount} duration=${durationSec}s`);

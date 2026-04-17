@@ -53,7 +53,9 @@ export class ChatSessionManager extends BaseSessionManager {
 
   /**
    * Dispatch a user turn into the room's live session, spawning one if needed.
-   * spec = { roomId, senderId, senderName, createdAt, content, rolePrompt }
+   * spec = { roomId, senderId, senderName, createdAt, content, rolePrompt, onProgress? }
+   * `onProgress(stage)` is forwarded to the base manager and fires as the
+   * subagent progresses through the turn ('thinking' → 'composing').
    * Returns { dispatched: boolean, pid?: number, reason?: string, firstTurn?: boolean }.
    */
   async dispatch(spec) {
@@ -69,7 +71,7 @@ export class ChatSessionManager extends BaseSessionManager {
 
     if (sess) {
       // Existing live session — just stream another user turn into stdin.
-      this._sendFollowUp(sess, spec.content || '');
+      this._sendFollowUp(sess, spec.content || '', { onProgress: spec.onProgress });
       return { dispatched: true, pid: sess.pid };
     }
 
@@ -89,7 +91,7 @@ export class ChatSessionManager extends BaseSessionManager {
       sender_id: spec.senderId || '',
     });
 
-    const spawned = await this._spawnSession(spec.roomId, spec.rolePrompt || '', firstTurnText);
+    const spawned = await this._spawnSession(spec.roomId, spec.rolePrompt || '', firstTurnText, { onProgress: spec.onProgress });
     if (!spawned) return { dispatched: false, reason: 'spawn_failed' };
     return { dispatched: true, pid: spawned.pid, firstTurn: true };
   }

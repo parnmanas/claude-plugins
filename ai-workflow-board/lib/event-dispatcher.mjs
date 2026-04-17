@@ -180,7 +180,17 @@ export class EventDispatcher {
     // Falls back to the legacy per-message spawn when the flag is disabled OR the
     // event carries no room_id (shouldn't happen after the server-side fix, but the
     // older SubagentManager path still covers the degenerate case).
+    //
+    // chat_request and chat_room_message both fire for the same user message; the
+    // dedup keys collide so only the first one actually spawns/dispatches. Wire
+    // onProgress here too in case chat_request wins the race — handleChatRoomMessage
+    // already sets the initial 'reading' typing state, and the heartbeat from the
+    // base session manager keeps it alive thereafter.
     if (delegationEnabled && persistentChat && this.#chatSessionManager && payload.room_id) {
+      const onProgress = (stage) => {
+        const status = stage === 'thinking' ? 'thinking' : 'composing reply';
+        this.#setChatRoomTyping(payload.room_id, true, status).catch(() => {});
+      };
       try {
         const result = await this.#chatSessionManager.dispatch({
           roomId: payload.room_id,
@@ -189,6 +199,7 @@ export class EventDispatcher {
           createdAt: ev.timestamp || '',
           content: payload.new_message || '',
           rolePrompt: payload.role_prompt || '',
+          onProgress,
         });
         if (result.dispatched) {
           log(`Chat request dispatched to session: room=${payload.room_id} pid=${result.pid}${result.firstTurn ? ' (new session)' : ''}`);
@@ -354,19 +365,29 @@ export class EventDispatcher {
       return;
     }
 
-    // Immediate visual feedback via typing indicator — ephemeral, auto-clears
-    // when the real reply arrives. Combining the emoji into status keeps it
-    // out of the persisted message log so we don't accumulate stale acks.
+    // Three-stage typing contract:
+    //   reading   — set immediately on receive, stays until subagent acknowledges
+    //   thinking  — first stdout from subagent (it has the message)
+    //   composing — first assistant content (actually writing the reply)
+    // The base session manager fires onProgress for the latter two and also
+    // re-fires the latest stage every 10s so the client typing indicator
+    // (which auto-expires after 15s) stays visible across long subagent runs.
     if (p.room_id) {
       await this.#setChatRoomTyping(p.room_id, true, '👀 reading context');
     }
+
+    const onProgress = p.room_id
+      ? (stage) => {
+          const status = stage === 'thinking' ? 'thinking' : 'composing reply';
+          this.#setChatRoomTyping(p.room_id, true, status).catch(() => {});
+        }
+      : undefined;
 
     const delegationEnabled = this.#config?.delegation?.enabled !== false;
     const persistentChat = this.#config?.delegation?.persistentChatSessions !== false;
 
     if (delegationEnabled && persistentChat && this.#chatSessionManager && p.room_id) {
       try {
-        await this.#setChatRoomTyping(p.room_id, true, 'thinking');
         const result = await this.#chatSessionManager.dispatch({
           roomId: p.room_id,
           senderId: p.sender_id || '',
@@ -374,13 +395,13 @@ export class EventDispatcher {
           createdAt: p.created_at || '',
           content: p.content || '',
           rolePrompt: p.role_prompt || '',
+          onProgress,
         });
         // Record into ring AFTER dispatch so the spawn path sees real prior
         // history (or empty → REST fallback) rather than self-referencing
         // the very message that triggered the dispatch.
         this.#chatSessionManager?.recordRoomMessage(p);
         if (result.dispatched) {
-          await this.#setChatRoomTyping(p.room_id, true, 'composing reply');
           log(`Chat room message dispatched to session: room=${p.room_id} pid=${result.pid}${result.firstTurn ? ' (new session)' : ''}`);
           return;
         }
