@@ -21,7 +21,6 @@
 import { createInterface } from 'readline';
 
 import {
-  REQUEST_TIMEOUT_MS,
   CHANNEL_INSTRUCTIONS,
   DELEGATION_DEFAULTS,
 } from './lib/constants.mjs';
@@ -34,6 +33,7 @@ import {
   composeChatRoomPrompt,
 } from './lib/prompts.mjs';
 import { PresenceHeartbeat } from './lib/presence-heartbeat.mjs';
+import { McpForwardSession } from './lib/mcp-forward-session.mjs';
 import { EventStream } from './lib/event-stream.mjs';
 import { SubagentManager } from './lib/subagent-manager.mjs';
 import { ChatSessionManager } from './lib/chat-session-manager.mjs';
@@ -42,48 +42,10 @@ import { uploadIfNewErrors } from './lib/error-log-uploader.mjs';
 import { onFlushThreshold } from './lib/event-log-recorder.mjs';
 
 // ─── MCP Proxy ────────────────────────────────────────────
-
-/**
- * Forward a JSON-RPC message to the AWB MCP server over HTTP.
- * Returns { body, sessionId } for JSON responses,
- * or { lines, sessionId } for SSE (streaming) responses.
- */
-async function forwardToServer(mcpUrl, apiKey, msg, sessionId) {
-  const headers = {
-    'Content-Type': 'application/json',
-    Accept: 'application/json, text/event-stream',
-    Authorization: `Bearer ${apiKey}`,
-  };
-  if (sessionId) headers['mcp-session-id'] = sessionId;
-
-  const resp = await fetch(mcpUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(msg),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-
-  const newSessionId = resp.headers.get('mcp-session-id') || sessionId;
-  const contentType = resp.headers.get('content-type') || '';
-
-  if (contentType.includes('text/event-stream')) {
-    // SSE response — extract data: lines as separate JSON-RPC messages
-    const text = await resp.text();
-    const lines = text.split('\n')
-      .filter(l => l.startsWith('data: '))
-      .map(l => l.slice(6).trim())
-      .filter(Boolean);
-    return { sessionId: newSessionId, lines };
-  }
-
-  // JSON response
-  const text = await resp.text();
-  let body = null;
-  if (text.trim()) {
-    try { body = JSON.parse(text); } catch { /* malformed */ }
-  }
-  return { sessionId: newSessionId, body };
-}
+//
+// Forward session lifecycle — including idle-TTL keepalive, silent
+// re-initialize on stale session, and network retry — lives in
+// lib/mcp-forward-session.mjs. This file just wires it to the stdio loop.
 
 /**
  * Patch the initialize response to declare claude/channel capability.
@@ -139,7 +101,7 @@ function runUnconfigured(rl) {
 /** Main proxy — bridges stdio MCP to remote AWB server + SSE channel */
 function runProxy(rl, config) {
   const mcpUrl = config.url.replace(/\/$/, '') + '/mcp';
-  let sessionId = null;
+  const forwardSession = new McpForwardSession(mcpUrl, config.apiKey);
   let eventStream = null;
 
   // Phase 3 D-52: presence heartbeat. Resolves agent_id from agent.json (or via MCP whoami
@@ -183,6 +145,7 @@ function runProxy(rl, config) {
   const shutdownHandler = async (signal) => {
     log(`Proxy received ${signal} — terminating subagents`);
     presenceHeartbeat._real?.stop();
+    forwardSession.stop();
     if (uploadTimer) { clearInterval(uploadTimer); uploadTimer = null; }
     eventStream?.stop();
     try { await subagentManager.stop(); } catch (err) { log(`shutdown: ${err.message}`); }
@@ -214,8 +177,7 @@ function runProxy(rl, config) {
         msg.params.capabilities ??= {};
         msg.params.capabilities.experimental ??= {};
         msg.params.capabilities.experimental['awb/schemaVersion'] = { version: 2 };
-        const result = await forwardToServer(mcpUrl, config.apiKey, msg, sessionId);
-        if (result.sessionId) sessionId = result.sessionId;
+        const result = await forwardSession.handleClaudeInitialize(msg);
         send(patchInitializeResponse(result.body));
       } catch (err) {
         log(`Initialize error: ${err.message}`);
@@ -240,7 +202,7 @@ function runProxy(rl, config) {
           // old 10-minute cadence made the feature feel broken even when it
           // worked. Errors still piggyback on the same upload so we don't
           // multiply POSTs.
-          const fireUpload = () => uploadIfNewErrors(config, agentId, '0.20.0').catch(() => {});
+          const fireUpload = () => uploadIfNewErrors(config, agentId, '0.21.0').catch(() => {});
           fireUpload();
           uploadTimer = setInterval(fireUpload, 30 * 1000);
           if (typeof uploadTimer.unref === 'function') uploadTimer.unref();
@@ -254,9 +216,11 @@ function runProxy(rl, config) {
     }
 
     // ── Forward everything else to AWB server ──────────────
+    // forwardSession handles: stale-session recovery (re-init + retry),
+    // network/5xx retry with backoff, and 4-minute keepalive so the
+    // server's 10-min idle TTL never fires in the first place.
     try {
-      const result = await forwardToServer(mcpUrl, config.apiKey, msg, sessionId);
-      if (result.sessionId) sessionId = result.sessionId;
+      const result = await forwardSession.forward(msg);
 
       if (result.lines) {
         // SSE response — write each JSON-RPC message directly
@@ -285,6 +249,7 @@ function runProxy(rl, config) {
     log('stdin closed — orphaning subagents and exiting proxy');
     eventStream?.stop();
     presenceHeartbeat._real?.stop();
+    forwardSession.stop();
     process.exit(0);
   });
 
@@ -315,6 +280,7 @@ export {
   DELEGATION_DEFAULTS,
   loadConfig,
   EventStream,
+  McpForwardSession,
   fetchTicketContext,
   composeTriggerPrompt,
   composeChatPrompt,
