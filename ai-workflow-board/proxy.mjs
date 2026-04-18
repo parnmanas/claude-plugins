@@ -235,9 +235,9 @@ function runProxy(rl, config) {
           presenceHeartbeat._real.start();
           // v0.11.0: ship accumulated proxy.log errors so admins can see
           // per-agent failures in AWB's web UI. Fire-and-forget + 10-min tick.
-          uploadIfNewErrors(config, agentId, '0.13.0').catch(() => {});
+          uploadIfNewErrors(config, agentId, '0.14.0').catch(() => {});
           uploadTimer = setInterval(() => {
-            uploadIfNewErrors(config, agentId, '0.13.0').catch(() => {});
+            uploadIfNewErrors(config, agentId, '0.14.0').catch(() => {});
           }, 10 * 60 * 1000);
           if (typeof uploadTimer.unref === 'function') uploadTimer.unref();
         });

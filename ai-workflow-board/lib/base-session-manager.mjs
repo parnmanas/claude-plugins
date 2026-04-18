@@ -25,6 +25,7 @@ import { createInterface } from 'readline';
 import { spawn } from 'child_process';
 import { SUBAGENTS_BASE_DIR, STOP_GRACE_MS } from './constants.mjs';
 import { log } from './logging.mjs';
+import { resolveClaudeBin } from './claude-bin-resolver.mjs';
 
 export class BaseSessionManager {
   #config;
@@ -115,10 +116,19 @@ export class BaseSessionManager {
         '--append-system-prompt', rolePrompt || '',
         '--dangerously-skip-permissions',
       ];
-      const child = spawn(this.#config.delegation.claudeBin, args, {
+      const resolvedBin = resolveClaudeBin(this.#config.delegation.claudeBin);
+      const child = spawn(resolvedBin, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: true,
         env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
+      });
+      // CRITICAL: attach 'error' listener synchronously BEFORE the pid check
+      // below. spawn() emits 'error' async on ENOENT; without a listener the
+      // event becomes an uncaughtException that corrupts proxy state.
+      // #wireExit attaches another 'error' handler later but only when the
+      // spawn succeeded — this early listener covers the failure branch.
+      child.once('error', (err) => {
+        log(`${this.#logTag} spawn error: code=${err.code || ''} bin=${resolvedBin} msg=${err.message}`);
       });
       child.unref();
 

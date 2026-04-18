@@ -14,10 +14,13 @@ import { log } from './logging.mjs';
 export async function fetchTicketContext(config, ticketId) {
   if (!ticketId) return null;
   try {
-    const url = `${config.url.replace(/\/$/, '')}/api/tickets/${encodeURIComponent(ticketId)}`;
+    // /api/agent/tickets/:id is guarded by AgentAuthGuard (X-Agent-Key), not
+    // the session-token AuthGuard behind /api/tickets/:id — the plugin holds
+    // an AWB API key, not a user session, so it must hit the agent route.
+    const url = `${config.url.replace(/\/$/, '')}/api/agent/tickets/${encodeURIComponent(ticketId)}`;
     const resp = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        'X-Agent-Key': config.apiKey,
         Accept: 'application/json',
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),

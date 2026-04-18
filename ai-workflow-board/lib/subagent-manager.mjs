@@ -12,6 +12,7 @@ import {
   STOP_GRACE_MS,
 } from './constants.mjs';
 import { log } from './logging.mjs';
+import { resolveClaudeBin } from './claude-bin-resolver.mjs';
 
 /**
  * Owns the lifecycle of Claude CLI subagent child processes.
@@ -158,10 +159,19 @@ export class SubagentManager {
       // at the proxy's pgrp (SIGHUP from a closing terminal, SIGINT from Ctrl+C
       // in the parent Claude CLI) don't cascade and kill in-flight work.
       // TTL sweep and explicit SIGTERM/SIGKILL by pid still work.
-      const child = spawn(this.#config.delegation.claudeBin, args, {
+      const resolvedBin = resolveClaudeBin(this.#config.delegation.claudeBin);
+      const child = spawn(resolvedBin, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
         env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
+      });
+      // CRITICAL: attach the 'error' listener synchronously BEFORE any early
+      // return. spawn() emits 'error' async on ENOENT etc.; without a
+      // listener the event becomes an uncaughtException that corrupts proxy
+      // state. Attaching here (not inside #wireExitHandler, which is skipped
+      // when pid is undefined) guarantees coverage for failed spawns.
+      child.once('error', (err) => {
+        log(`Subagent spawn error: code=${err.code || ''} bin=${resolvedBin} msg=${err.message}`);
       });
       child.unref();
 
