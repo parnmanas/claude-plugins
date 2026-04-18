@@ -15,10 +15,12 @@
 //      absorbs it without crashing)
 
 import { execSync } from 'child_process';
-import { accessSync, constants as fsConstants, readlinkSync, readdirSync } from 'fs';
+import { accessSync, constants as fsConstants, readlinkSync } from 'fs';
 import { homedir } from 'os';
 import { join, basename } from 'path';
 import { log } from './logging.mjs';
+
+const isWindows = process.platform === 'win32';
 
 function canExec(p) {
   if (!p) return false;
@@ -29,9 +31,11 @@ function canExec(p) {
  * Resolve the Claude CLI binary by inspecting the parent process — we're a
  * child of `claude` (MCP server spawned by the CLI), so /proc/{ppid}/exe on
  * Linux points right at its executable even when it lives somewhere exotic
- * (VS Code extension bundle, non-PATH npm install, etc). Returns null on
- * macOS/Windows (no /proc) or if the symlink doesn't resolve to something
- * recognizable as claude.
+ * (non-PATH npm install, systemd, docker). Returns null on macOS/Windows
+ * (no /proc) or if the symlink doesn't resolve to a claude binary.
+ *
+ * VS Code extension bundle paths are intentionally rejected — we don't want
+ * the plugin to silently depend on the IDE extension being installed.
  */
 function parentClaudeBin() {
   try {
@@ -39,31 +43,15 @@ function parentClaudeBin() {
     if (!ppid) return null;
     const exe = readlinkSync(`/proc/${ppid}/exe`);
     if (!exe || !canExec(exe)) return null;
+    // Hard-reject VS Code extension bundle regardless of basename match.
+    if (/\.vscode\/extensions\//.test(exe)) return null;
     const name = basename(exe);
-    // Accept `claude`, `claude-{suffix}`, or any path whose final segment
-    // contains `claude` (covers VS Code extension native-binary/claude).
+    // Accept `claude`, `claude-{suffix}`, or any basename containing `claude`.
     if (/claude/i.test(name)) return exe;
     return null;
   } catch {
     return null;
   }
-}
-
-/**
- * Scan ~/.vscode/extensions for the bundled Claude Code native binary. The
- * VS Code extension ships its own claude executable that isn't on PATH but
- * is the thing that spawned us when the user runs from the IDE.
- */
-function vscodeExtensionClaudeBin() {
-  try {
-    const extDir = join(homedir(), '.vscode/extensions');
-    for (const name of readdirSync(extDir)) {
-      if (!/^anthropic\.claude-code/i.test(name)) continue;
-      const candidate = join(extDir, name, 'resources/native-binary/claude');
-      if (canExec(candidate)) return candidate;
-    }
-  } catch { /* dir missing, permission denied, etc. */ }
-  return null;
 }
 
 let cached = null;
@@ -87,8 +75,8 @@ export function resolveClaudeBin(configured = 'claude') {
   // 2. Parent process exe (Linux /proc trick). We are a child of claude — if
   //    the parent's /proc/{ppid}/exe resolves to a binary whose name contains
   //    "claude", that's the canonical path. Works even when PATH is stripped
-  //    (VS Code extension, systemd, docker) because it's direct filesystem
-  //    inspection, not a PATH lookup.
+  //    (systemd, docker, non-PATH npm install) because it's direct filesystem
+  //    inspection, not a PATH lookup. No-op on Windows/macOS.
   const viaParent = parentClaudeBin();
   if (viaParent) {
     cached = viaParent;
@@ -96,24 +84,17 @@ export function resolveClaudeBin(configured = 'claude') {
     return cached;
   }
 
-  // 3. VS Code extension bundled binary — covers the common case where the
-  //    user runs Claude Code from the IDE and the bundled claude isn't on PATH.
-  const viaVSCode = vscodeExtensionClaudeBin();
-  if (viaVSCode) {
-    cached = viaVSCode;
-    log(`[claude-bin] resolved via VS Code extension: ${viaVSCode}`);
-    return cached;
-  }
-
-  // 4. Ask the shell. Picks up `claude` wherever the user's login shell
+  // 3. Ask the shell. Picks up `claude` wherever the user's login shell
   //    finds it, which may differ from the MCP proxy's inherited PATH.
+  //    Uses cmd.exe on Windows, /bin/sh elsewhere.
   try {
-    const out = execSync('command -v claude 2>/dev/null || which claude 2>/dev/null', {
+    const cmd = isWindows ? 'where claude' : 'command -v claude 2>/dev/null || which claude 2>/dev/null';
+    const out = execSync(cmd, {
       encoding: 'utf8',
       timeout: 2000,
-      shell: '/bin/sh',
+      shell: isWindows ? undefined : '/bin/sh',
     }).trim();
-    const first = out.split('\n')[0] || '';
+    const first = out.split(/\r?\n/)[0] || '';
     if (canExec(first)) {
       cached = first;
       log(`[claude-bin] resolved via shell: ${first}`);
@@ -121,9 +102,27 @@ export function resolveClaudeBin(configured = 'claude') {
     }
   } catch { /* shell or spawn failed, keep trying */ }
 
-  // 5. Common install locations
+  // 4. Platform-specific common install locations.
   const home = homedir();
-  const candidates = [
+  const candidates = isWindows
+    ? windowsCandidates(home)
+    : unixCandidates(home);
+  for (const p of candidates) {
+    if (canExec(p)) {
+      cached = p;
+      log(`[claude-bin] resolved via candidate: ${p}`);
+      return cached;
+    }
+  }
+
+  // 5. Give up — return literal. Caller's error listener will absorb ENOENT.
+  cached = 'claude';
+  log('[claude-bin] resolution failed; falling back to literal "claude" (expect ENOENT unless PATH is set)');
+  return cached;
+}
+
+function unixCandidates(home) {
+  return [
     join(home, '.npm-global/bin/claude'),
     join(home, '.bun/bin/claude'),
     join(home, '.local/bin/claude'),
@@ -134,16 +133,29 @@ export function resolveClaudeBin(configured = 'claude') {
     '/opt/homebrew/bin/claude',
     '/usr/bin/claude',
   ];
-  for (const p of candidates) {
-    if (canExec(p)) {
-      cached = p;
-      log(`[claude-bin] resolved via candidate: ${p}`);
-      return cached;
-    }
-  }
+}
 
-  // 6. Give up — return literal. Caller's error listener will absorb ENOENT.
-  cached = 'claude';
-  log('[claude-bin] resolution failed; falling back to literal "claude" (expect ENOENT unless PATH is set)');
-  return cached;
+function windowsCandidates(home) {
+  // npm on Windows installs globals under %APPDATA%\npm and creates a
+  // .cmd/.ps1 wrapper there for each bin entry. Node's child_process.spawn
+  // handles .cmd transparently when the path is absolute, but falls back to
+  // PATH (which often doesn't include %APPDATA%\npm) when given a bare name.
+  // That's the specific install layout the user pointed at:
+  //   C:\Users\<user>\AppData\Roaming\npm\...\@anthropic-ai\claude-code\bin
+  const appdata = process.env.APPDATA || join(home, 'AppData', 'Roaming');
+  const localAppData = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+  const pkgBin = join(appdata, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin');
+  return [
+    // npm global shims — the canonical Windows entry point
+    join(appdata, 'npm', 'claude.cmd'),
+    join(appdata, 'npm', 'claude.exe'),
+    join(appdata, 'npm', 'claude.ps1'),
+    // npm-installed package bin dir — whatever executable file is named claude
+    join(pkgBin, 'claude.cmd'),
+    join(pkgBin, 'claude.exe'),
+    join(pkgBin, 'claude.js'),
+    join(pkgBin, 'claude'),
+    // volta/chocolatey-style locations (best-effort)
+    join(localAppData, 'Programs', 'anthropic', 'claude-code', 'claude.exe'),
+  ];
 }

@@ -121,6 +121,9 @@ export class BaseSessionManager {
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: true,
         env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
+        // On Windows the resolved path may be a .cmd wrapper (%APPDATA%\npm\
+        // claude.cmd); Node requires shell:true to dispatch those via cmd.exe.
+        shell: process.platform === 'win32',
       });
       // CRITICAL: attach 'error' listener synchronously BEFORE the pid check
       // below. spawn() emits 'error' async on ENOENT; without a listener the
