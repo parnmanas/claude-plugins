@@ -93,6 +93,26 @@ export class EventDispatcher {
       return;
     }
 
+    // ALWAYS notify the main Claude session about the incoming trigger, even
+    // when we're about to hand it off to a subagent. Without this, delegation-
+    // success paths silently short-circuit and the human operator sees nothing
+    // — no way to know their reviewer/assignee assignment actually fired. The
+    // subagent still does the automated work; this just keeps the user in the
+    // loop. Order matters: send the notification before any async spawn so
+    // the user sees the trigger before any board_update ripple from subagent
+    // actions lands.
+    sendChannelEvent(
+      `[AWB Trigger] ticket=${ev.ticket_id} role=${ev.action} trigger=${ev.field_changed}`,
+      {
+        type: 'agent_trigger',
+        ticket_id: ev.ticket_id || '',
+        trigger_id: ev.field_changed || '',
+        agent_id: ev.actor_name || '',
+        role: ev.action || '',
+        timestamp: ev.timestamp || new Date().toISOString(),
+      },
+    );
+
     // Phase 1 flatten-on-emit asymmetry: agent_trigger reads TOP-LEVEL fields
     // (ev.role_prompt, ev.ticket_prompt, ev.ticket_id, ev.field_changed, ev.actor_name).
     // In contrast, chat_request is envelope-native and reads ev.payload.* — see
@@ -167,23 +187,10 @@ export class EventDispatcher {
       }
     }
 
-    // ── Legacy Phase 1 pass-through path ─────────────────────────────
-    // Runs when: delegation disabled OR subagentManager missing OR canSpawn false
-    // OR spawn declined OR delegation path threw. Preserves exact Phase 1 behavior
-    // for users who set delegation.enabled: false (or who have no delegation config).
-    // AWB events.controller uses: action=role, field_changed=trigger_id, actor_name=agent_id
-    sendChannelEvent(
-      `[AWB Trigger] ticket=${ev.ticket_id} role=${ev.action} trigger=${ev.field_changed}`,
-      {
-        type: 'agent_trigger',
-        ticket_id: ev.ticket_id || '',
-        trigger_id: ev.field_changed || '',
-        agent_id: ev.actor_name || '',
-        role: ev.action || '',
-        timestamp: ev.timestamp || new Date().toISOString(),
-      },
-    );
-    log(`Trigger forwarded (legacy path): ticket=${ev.ticket_id} role=${ev.action}`);
+    // Main-session notification already sent at the top of this method, so
+    // no fallback sendChannelEvent needed here. If delegation failed, the
+    // user has still been notified of the trigger and can intervene.
+    log(`Trigger processed (no delegation path spawned): ticket=${ev.ticket_id} role=${ev.action}`);
   }
 
   async handleChatRequest(raw) {
