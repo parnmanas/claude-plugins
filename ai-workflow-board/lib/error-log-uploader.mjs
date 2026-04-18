@@ -7,6 +7,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { log } from './logging.mjs';
+import { drainEvents } from './event-log-recorder.mjs';
 
 const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
 const LOG_PATH = join(CONFIG_DIR, 'channels', 'awb', 'proxy.log');
@@ -77,8 +78,11 @@ export async function uploadIfNewErrors(config, agentId, pluginVersion) {
   if (!config?.url || !config?.apiKey || !agentId) return { uploaded: 0, reason: 'missing_config' };
   const markerMs = await readMarker();
   const sinceMs = markerMs ?? (Date.now() - DEFAULT_LOOKBACK_MS);
-  const entries = await scanErrorsSince(LOG_PATH, sinceMs);
-  if (entries.length === 0) return { uploaded: 0, reason: 'no_new_errors' };
+  const errorEntries = await scanErrorsSince(LOG_PATH, sinceMs);
+  const eventEntries = drainEvents();
+  // Combined cap: errors take precedence — trim event tail if over MAX_ENTRIES.
+  const combined = errorEntries.concat(eventEntries).slice(0, MAX_ENTRIES);
+  if (combined.length === 0) return { uploaded: 0, reason: 'no_new_entries' };
 
   const url = `${config.url.replace(/\/$/, '')}/api/agent/error-logs`;
   try {
@@ -92,7 +96,7 @@ export async function uploadIfNewErrors(config, agentId, pluginVersion) {
         agent_id: agentId,
         workspace_id: config.workspace_id ?? null,
         plugin_version: pluginVersion,
-        entries,
+        entries: combined,
       }),
     });
     if (!resp.ok) {
@@ -100,11 +104,18 @@ export async function uploadIfNewErrors(config, agentId, pluginVersion) {
       return { uploaded: 0, reason: `http_${resp.status}` };
     }
     const data = await resp.json().catch(() => ({}));
-    const lastOccurredAt = data.last_occurred_at ?? entries[entries.length - 1].occurred_at;
+    // Marker advances ONLY on error timestamps — event entries are drained
+    // on send and have no persistent replay, so they must not move the marker
+    // (otherwise a busy event burst would blind us to new errors after it).
+    const lastErrorOccurredAt = errorEntries.length > 0
+      ? errorEntries[errorEntries.length - 1].occurred_at
+      : null;
     const uploadedAt = data.uploaded_at ?? new Date().toISOString();
-    await writeMarker(agentId, lastOccurredAt, uploadedAt);
-    log(`[uploader] uploaded ${data.accepted ?? entries.length} entries, marker=${lastOccurredAt}`);
-    return { uploaded: entries.length, last_occurred_at: lastOccurredAt };
+    if (lastErrorOccurredAt) {
+      await writeMarker(agentId, lastErrorOccurredAt, uploadedAt);
+    }
+    log(`[uploader] uploaded ${data.accepted ?? combined.length} entries (errors=${errorEntries.length} events=${eventEntries.length}), marker=${lastErrorOccurredAt ?? '(unchanged)'}`);
+    return { uploaded: combined.length, errors: errorEntries.length, events: eventEntries.length, last_occurred_at: lastErrorOccurredAt };
   } catch (err) {
     log(`[uploader] upload error: ${err.message}`);
     return { uploaded: 0, reason: 'network_error' };

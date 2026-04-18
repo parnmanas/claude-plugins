@@ -23,6 +23,7 @@ import {
   composeChatRoomPrompt,
   composeCommentMentionPrompt,
 } from './prompts.mjs';
+import { recordEvent } from './event-log-recorder.mjs';
 
 export class EventDispatcher {
   #config;
@@ -52,12 +53,22 @@ export class EventDispatcher {
   dispatch(eventType, raw) {
     if (!raw) return;
     switch (eventType) {
+      case 'agent_trigger':
+      case 'board_update':
+      case 'chat_request':
+      case 'chat_room_message':
+      case 'comment_mention':
+        recordEvent(eventType, raw);
+        break;
+      default:
+        return; // silently drop unknown event types (e.g. agent_typing)
+    }
+    switch (eventType) {
       case 'agent_trigger':      return this.handleTrigger(raw);
       case 'board_update':       return this.handleBoardUpdate(raw);
       case 'chat_request':       return this.handleChatRequest(raw);
       case 'chat_room_message':  return this.handleChatRoomMessage(raw);
       case 'comment_mention':    return this.handleCommentMention(raw);
-      default: return; // silently drop unknown event types (e.g. agent_typing)
     }
   }
 
