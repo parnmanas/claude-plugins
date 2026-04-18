@@ -21,11 +21,12 @@ import { join, basename } from 'path';
 import { log } from './logging.mjs';
 
 const isWindows = process.platform === 'win32';
-// On Windows, accessSync(X_OK) returns true for any readable file — including
-// extensionless bash-style wrappers that Windows cannot execute directly
-// (spawn without shell:true ENOENTs). Gate acceptance on a Windows-executable
-// extension so `where claude` doesn't hand us the MSYS/Bash wrapper.
-const WIN_EXEC_EXT = /\.(exe|cmd|bat|ps1)$/i;
+// Windows: Claude Code CLI always installs as claude.exe — the only path we
+// ever want to spawn. `.cmd`/`.ps1` shims and the MSYS bash wrapper in the
+// same npm dir don't spawn reliably (shell-quoting, shebang dependency), and
+// accessSync(X_OK) accepts any readable file on Windows so those non-.exe
+// paths can silently win resolution. Reject anything that isn't .exe here.
+const WIN_EXEC_EXT = /\.exe$/i;
 
 function canExec(p) {
   if (!p) return false;
@@ -92,9 +93,9 @@ export function resolveClaudeBin(configured = 'claude') {
 
   // 3. Ask the shell. Picks up `claude` wherever the user's login shell
   //    finds it, which may differ from the MCP proxy's inherited PATH.
-  //    Uses cmd.exe on Windows, /bin/sh elsewhere. On Windows `where` returns
-  //    every matching name (bash wrapper + .cmd + .exe …); scan all lines and
-  //    prefer .exe, because canExec rejects the extensionless bash wrapper.
+  //    Uses cmd.exe on Windows, /bin/sh elsewhere. Windows `where` returns
+  //    every matching name (bash wrapper + .cmd + .exe …); scan all lines
+  //    and only accept claude.exe — canExec rejects everything else on win.
   try {
     const cmd = isWindows ? 'where claude' : 'command -v claude 2>/dev/null || which claude 2>/dev/null';
     const out = execSync(cmd, {
@@ -103,10 +104,7 @@ export function resolveClaudeBin(configured = 'claude') {
       shell: isWindows ? undefined : '/bin/sh',
     }).trim();
     const lines = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    const execCandidates = isWindows
-      ? [...lines.filter((l) => /\.exe$/i.test(l)), ...lines.filter((l) => /\.(cmd|bat|ps1)$/i.test(l))]
-      : lines;
-    for (const cand of execCandidates) {
+    for (const cand of lines) {
       if (canExec(cand)) {
         cached = cand;
         log(`[claude-bin] resolved via shell: ${cand}`);
@@ -149,22 +147,15 @@ function unixCandidates(home) {
 }
 
 function windowsCandidates(home) {
-  // @anthropic-ai/claude-code on Windows installs an actual claude.exe inside
-  // the package bin dir (that's the layout the user pointed at:
-  // C:\Users\<user>\AppData\Roaming\npm\...\@anthropic-ai\claude-code\bin).
-  // Prefer .exe everywhere — direct spawn, no shell, no arg-escaping risk.
-  // Only fall back to .cmd/.js if no .exe exists on disk.
+  // Windows = claude.exe only. @anthropic-ai/claude-code installs a real
+  // claude.exe both at the npm bin root and inside the package bin dir;
+  // we never want .cmd/.ps1/bash wrappers (see canExec Windows gate).
   const appdata = process.env.APPDATA || join(home, 'AppData', 'Roaming');
   const localAppData = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
   const pkgBin = join(appdata, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin');
   return [
-    // .exe first — ordered by likelihood the user hits it
     join(pkgBin, 'claude.exe'),
     join(appdata, 'npm', 'claude.exe'),
     join(localAppData, 'Programs', 'anthropic', 'claude-code', 'claude.exe'),
-    // .cmd/.ps1 shims — only if no .exe exists; caller spawns with shell:true
-    join(appdata, 'npm', 'claude.cmd'),
-    join(pkgBin, 'claude.cmd'),
-    join(appdata, 'npm', 'claude.ps1'),
   ];
 }
