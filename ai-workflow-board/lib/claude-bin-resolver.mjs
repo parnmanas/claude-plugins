@@ -21,9 +21,15 @@ import { join, basename } from 'path';
 import { log } from './logging.mjs';
 
 const isWindows = process.platform === 'win32';
+// On Windows, accessSync(X_OK) returns true for any readable file — including
+// extensionless bash-style wrappers that Windows cannot execute directly
+// (spawn without shell:true ENOENTs). Gate acceptance on a Windows-executable
+// extension so `where claude` doesn't hand us the MSYS/Bash wrapper.
+const WIN_EXEC_EXT = /\.(exe|cmd|bat|ps1)$/i;
 
 function canExec(p) {
   if (!p) return false;
+  if (isWindows && !WIN_EXEC_EXT.test(p)) return false;
   try { accessSync(p, fsConstants.X_OK); return true; } catch { return false; }
 }
 
@@ -86,7 +92,9 @@ export function resolveClaudeBin(configured = 'claude') {
 
   // 3. Ask the shell. Picks up `claude` wherever the user's login shell
   //    finds it, which may differ from the MCP proxy's inherited PATH.
-  //    Uses cmd.exe on Windows, /bin/sh elsewhere.
+  //    Uses cmd.exe on Windows, /bin/sh elsewhere. On Windows `where` returns
+  //    every matching name (bash wrapper + .cmd + .exe …); scan all lines and
+  //    prefer .exe, because canExec rejects the extensionless bash wrapper.
   try {
     const cmd = isWindows ? 'where claude' : 'command -v claude 2>/dev/null || which claude 2>/dev/null';
     const out = execSync(cmd, {
@@ -94,11 +102,16 @@ export function resolveClaudeBin(configured = 'claude') {
       timeout: 2000,
       shell: isWindows ? undefined : '/bin/sh',
     }).trim();
-    const first = out.split(/\r?\n/)[0] || '';
-    if (canExec(first)) {
-      cached = first;
-      log(`[claude-bin] resolved via shell: ${first}`);
-      return cached;
+    const lines = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    const execCandidates = isWindows
+      ? [...lines.filter((l) => /\.exe$/i.test(l)), ...lines.filter((l) => /\.(cmd|bat|ps1)$/i.test(l))]
+      : lines;
+    for (const cand of execCandidates) {
+      if (canExec(cand)) {
+        cached = cand;
+        log(`[claude-bin] resolved via shell: ${cand}`);
+        return cached;
+      }
     }
   } catch { /* shell or spawn failed, keep trying */ }
 
@@ -153,8 +166,5 @@ function windowsCandidates(home) {
     join(appdata, 'npm', 'claude.cmd'),
     join(pkgBin, 'claude.cmd'),
     join(appdata, 'npm', 'claude.ps1'),
-    // JS entry as last resort (would need `node <jsPath>` wrapping — not wired)
-    join(pkgBin, 'claude.js'),
-    join(pkgBin, 'claude'),
   ];
 }
