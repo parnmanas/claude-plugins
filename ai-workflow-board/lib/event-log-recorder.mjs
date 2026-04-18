@@ -1,8 +1,10 @@
 // ─── Event Log Recorder ───────────────────────────────────
 // In-memory ring buffer of SSE events the plugin received. Drained by the
-// error-log uploader so the same 10-minute batch POST carries both error and
-// info-level event rows to /api/agent/error-logs, showing up in the admin
-// Agent Logs viewer alongside crash/sse/etc. entries.
+// error-log uploader. Two drain triggers: a 30s periodic tick owned by
+// proxy.mjs, and an immediate flush when the buffer crosses FLUSH_THRESHOLD
+// (wired via onFlushThreshold). Result: info-level event rows land in the
+// admin Agent Logs viewer within seconds of arrival instead of waiting out
+// the old 10-minute cadence.
 //
 // Captures the 5 event types that event-dispatcher.mjs routes:
 // agent_trigger, board_update, chat_request, chat_room_message, comment_mention.
@@ -11,7 +13,14 @@ const MAX_BUFFER = 500;
 const MAX_RAW_LINE = 4000;
 const MAX_MESSAGE = 2000;
 
+// When the buffer reaches this many entries, signal callers (via the flush
+// callback registered with onThresholdReached) to kick off an out-of-schedule
+// upload instead of waiting for the 30s tick. Keeps a moderately busy ticket
+// from sitting around for half a minute before the user can see events.
+const FLUSH_THRESHOLD = 10;
+
 const buffer = [];
+let onThresholdReached = null;
 
 function summarize(eventType, ev) {
   switch (eventType) {
@@ -38,6 +47,15 @@ function summarize(eventType, ev) {
   }
 }
 
+/**
+ * Register a callback invoked when the buffer first crosses FLUSH_THRESHOLD
+ * since the last drain. The callback should start an upload; swallowing any
+ * errors internally. Only one callback is kept — last registration wins.
+ */
+export function onFlushThreshold(cb) {
+  onThresholdReached = typeof cb === 'function' ? cb : null;
+}
+
 /** Record a received SSE event. `raw` is the undecoded JSON data line. */
 export function recordEvent(eventType, raw) {
   if (!eventType || !raw) return;
@@ -49,6 +67,7 @@ export function recordEvent(eventType, raw) {
     ? ev.timestamp
     : new Date().toISOString();
 
+  const prevLen = buffer.length;
   buffer.push({
     occurred_at: occurredAt,
     level: 'info',
@@ -60,6 +79,14 @@ export function recordEvent(eventType, raw) {
 
   // Drop oldest when oversized — drained on next upload tick anyway.
   if (buffer.length > MAX_BUFFER) buffer.splice(0, buffer.length - MAX_BUFFER);
+
+  // Fire the threshold callback once per crossing. The caller is expected
+  // to drain soon, which resets the count. We intentionally don't debounce
+  // here — the uploader already handles concurrent invocations by draining
+  // atomically, and the 30s tick will pick up anything missed.
+  if (prevLen < FLUSH_THRESHOLD && buffer.length >= FLUSH_THRESHOLD && onThresholdReached) {
+    try { onThresholdReached(); } catch { /* swallow — uploader errors are its own concern */ }
+  }
 }
 
 /** Return the buffered entries and clear the buffer. */
