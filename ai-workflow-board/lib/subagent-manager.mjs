@@ -164,10 +164,10 @@ export class SubagentManager {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
         env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
-        // On Windows, resolvedBin can be a .cmd wrapper (npm global install
-        // creates claude.cmd under %APPDATA%\npm). Node's spawn requires
-        // shell:true to execute .cmd/.bat files via cmd.exe. No-op elsewhere.
-        shell: process.platform === 'win32',
+        // Only .cmd/.bat/.ps1 wrappers need cmd.exe (shell:true). Native .exe
+        // files spawn directly, avoiding Windows arg-escaping surprises from
+        // shell-parsed quotes/ampersands in spec.taskText.
+        shell: /\.(cmd|bat|ps1)$/i.test(resolvedBin),
       });
       // CRITICAL: attach the 'error' listener synchronously BEFORE any early
       // return. spawn() emits 'error' async on ENOENT etc.; without a

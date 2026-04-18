@@ -136,26 +136,25 @@ function unixCandidates(home) {
 }
 
 function windowsCandidates(home) {
-  // npm on Windows installs globals under %APPDATA%\npm and creates a
-  // .cmd/.ps1 wrapper there for each bin entry. Node's child_process.spawn
-  // handles .cmd transparently when the path is absolute, but falls back to
-  // PATH (which often doesn't include %APPDATA%\npm) when given a bare name.
-  // That's the specific install layout the user pointed at:
-  //   C:\Users\<user>\AppData\Roaming\npm\...\@anthropic-ai\claude-code\bin
+  // @anthropic-ai/claude-code on Windows installs an actual claude.exe inside
+  // the package bin dir (that's the layout the user pointed at:
+  // C:\Users\<user>\AppData\Roaming\npm\...\@anthropic-ai\claude-code\bin).
+  // Prefer .exe everywhere — direct spawn, no shell, no arg-escaping risk.
+  // Only fall back to .cmd/.js if no .exe exists on disk.
   const appdata = process.env.APPDATA || join(home, 'AppData', 'Roaming');
   const localAppData = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
   const pkgBin = join(appdata, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin');
   return [
-    // npm global shims — the canonical Windows entry point
-    join(appdata, 'npm', 'claude.cmd'),
-    join(appdata, 'npm', 'claude.exe'),
-    join(appdata, 'npm', 'claude.ps1'),
-    // npm-installed package bin dir — whatever executable file is named claude
-    join(pkgBin, 'claude.cmd'),
+    // .exe first — ordered by likelihood the user hits it
     join(pkgBin, 'claude.exe'),
+    join(appdata, 'npm', 'claude.exe'),
+    join(localAppData, 'Programs', 'anthropic', 'claude-code', 'claude.exe'),
+    // .cmd/.ps1 shims — only if no .exe exists; caller spawns with shell:true
+    join(appdata, 'npm', 'claude.cmd'),
+    join(pkgBin, 'claude.cmd'),
+    join(appdata, 'npm', 'claude.ps1'),
+    // JS entry as last resort (would need `node <jsPath>` wrapping — not wired)
     join(pkgBin, 'claude.js'),
     join(pkgBin, 'claude'),
-    // volta/chocolatey-style locations (best-effort)
-    join(localAppData, 'Programs', 'anthropic', 'claude-code', 'claude.exe'),
   ];
 }
