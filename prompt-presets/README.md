@@ -1,25 +1,32 @@
 # prompt-presets
 
-자주 쓰는 prompt 를 미리 정의해두고 slash command 로 호출하는 플러그인.
+자주 쓰는 prompt 를 사용자 로컬에 preset 으로 저장해두고 slash command 로 불러 쓰는 플러그인.
 
-## 사용법
+Preset 파일은 플러그인 repo 가 아니라 **사용자의 Claude config 디렉토리**에 저장된다.
 
-1. `commands/<name>.md` 파일을 추가한다.
-2. Claude Code 에서 `/prompt-presets:<name>` 으로 호출한다.
+## 저장 위치
 
-## 파일 형식
-
-```markdown
----
-description: 한 줄 설명
----
-
-여기에 Claude 에게 전달할 prompt 본문을 쓴다.
-`!`\``명령``` 로 shell 을 끼워넣거나 `@path/to/file` 로 파일 참조 가능.
+```
+${CLAUDE_CONFIG_DIR:-~/.claude}/prompt-presets/<name>.md
 ```
 
-## 새 preset 추가 가이드
+- `CLAUDE_CONFIG_DIR` 환경변수가 있으면 그 폴더 기준.
+- 없으면 `~/.claude` 기준.
 
-- 커밋/푸시용 문장을 반복 입력하기 싫을 때 추가한다.
-- 파일명이 곧 슬래시 커맨드 이름이다. `commands/foo.md` → `/prompt-presets:foo`.
-- description frontmatter 는 슬래시 커맨드 목록에 표시된다.
+## 커맨드
+
+| Command | 설명 |
+| --- | --- |
+| `/prompt-presets:save <name> [content]` | Preset 저장. content 생략 시 다음 메시지 본문을 받는다. |
+| `/prompt-presets:run <name>` | 저장된 preset 을 방금 보낸 요청처럼 실행. |
+| `/prompt-presets:list` | 저장된 preset 목록. |
+| `/prompt-presets:edit <name>` | 기존 preset 수정. |
+| `/prompt-presets:rm <name>` | Preset 삭제. |
+
+## 예시 사용 흐름
+
+1. `/prompt-presets:save commit-push-all` → 내용 입력:
+   ```
+   parent repo 와 모든 submodule 의 변경을 한 번에 commit + push. 민감 파일 섞이면 경고. --force/--no-verify 금지.
+   ```
+2. `/prompt-presets:run commit-push-all` → Claude 가 저장된 지시를 읽어 그대로 수행.
