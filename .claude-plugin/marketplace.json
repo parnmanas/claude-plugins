@@ -24,6 +24,12 @@
       "description": "AI Workflow Board - ticket management, boards, agents, and workspace tools.",
       "category": "productivity",
       "source": "./ai-workflow-board"
+    },
+    {
+      "name": "prompt-presets",
+      "description": "User-defined reusable prompt templates invoked as slash commands.",
+      "category": "productivity",
+      "source": "./prompt-presets"
     }
   ]
 }

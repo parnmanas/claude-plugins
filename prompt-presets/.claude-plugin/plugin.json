@@ -1,0 +1,12 @@
+{
+  "name": "prompt-presets",
+  "description": "User-defined reusable prompt templates invoked as slash commands. Add a markdown file under commands/ and call it via /prompt-presets:<name>.",
+  "version": "0.1.0",
+  "keywords": [
+    "prompts",
+    "templates",
+    "snippets",
+    "commit",
+    "workflow"
+  ]
+}
