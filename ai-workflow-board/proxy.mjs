@@ -240,7 +240,7 @@ function runProxy(rl, config) {
           // old 10-minute cadence made the feature feel broken even when it
           // worked. Errors still piggyback on the same upload so we don't
           // multiply POSTs.
-          const fireUpload = () => uploadIfNewErrors(config, agentId, '0.19.0').catch(() => {});
+          const fireUpload = () => uploadIfNewErrors(config, agentId, '0.20.0').catch(() => {});
           fireUpload();
           uploadTimer = setInterval(fireUpload, 30 * 1000);
           if (typeof uploadTimer.unref === 'function') uploadTimer.unref();

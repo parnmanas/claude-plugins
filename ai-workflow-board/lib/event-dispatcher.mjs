@@ -93,25 +93,11 @@ export class EventDispatcher {
       return;
     }
 
-    // ALWAYS notify the main Claude session about the incoming trigger, even
-    // when we're about to hand it off to a subagent. Without this, delegation-
-    // success paths silently short-circuit and the human operator sees nothing
-    // — no way to know their reviewer/assignee assignment actually fired. The
-    // subagent still does the automated work; this just keeps the user in the
-    // loop. Order matters: send the notification before any async spawn so
-    // the user sees the trigger before any board_update ripple from subagent
-    // actions lands.
-    sendChannelEvent(
-      `[AWB Trigger] ticket=${ev.ticket_id} role=${ev.action} trigger=${ev.field_changed}`,
-      {
-        type: 'agent_trigger',
-        ticket_id: ev.ticket_id || '',
-        trigger_id: ev.field_changed || '',
-        agent_id: ev.actor_name || '',
-        role: ev.action || '',
-        timestamp: ev.timestamp || new Date().toISOString(),
-      },
-    );
+    // NOTE: per explicit design intent, every AWB event is handled by a
+    // subagent — the main Claude session is NOT notified. v0.19.0 briefly
+    // added a sendChannelEvent here for visibility; removed in v0.20.0 so
+    // agent_trigger delegates silently and the user's main session stays
+    // focused on whatever else they're working on.
 
     // Phase 1 flatten-on-emit asymmetry: agent_trigger reads TOP-LEVEL fields
     // (ev.role_prompt, ev.ticket_prompt, ev.ticket_id, ev.field_changed, ev.actor_name).
@@ -410,21 +396,12 @@ export class EventDispatcher {
         }
       }
 
-      // No live ticket session — forward to main session as before
-      const label = ev.entity_type === 'comment' ? 'Comment' : 'Update';
-      sendChannelEvent(
-        `[AWB ${label}] ticket=${ev.ticket_id} ${ev.entity_type}.${ev.action}${ev.field_changed ? ` field=${ev.field_changed}` : ''} by=${ev.actor_name}`,
-        {
-          type: 'board_update',
-          ticket_id: ev.ticket_id || '',
-          entity_type: ev.entity_type || '',
-          action: ev.action || '',
-          field_changed: ev.field_changed || '',
-          actor_name: ev.actor_name || '',
-          timestamp: ev.timestamp || new Date().toISOString(),
-        },
-      );
-      log(`Board update forwarded: ticket=${ev.ticket_id} ${ev.entity_type}.${ev.action}`);
+      // No live ticket session — drop. Per explicit design intent, AWB
+      // events are exclusively a subagent concern; the main session stays
+      // focused on the user's current task. If there's no subagent alive to
+      // receive a board_update for this ticket, it means no one is actively
+      // working on it — the update is just noise from this agent's POV.
+      log(`Board update dropped (no live ticket session): ticket=${ev.ticket_id} ${ev.entity_type}.${ev.action}`);
     } catch (err) {
       log(`Failed to parse board_update: ${err.message}`);
     }
