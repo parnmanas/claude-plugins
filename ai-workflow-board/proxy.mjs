@@ -39,6 +39,7 @@ import { SubagentManager } from './lib/subagent-manager.mjs';
 import { ChatSessionManager } from './lib/chat-session-manager.mjs';
 import { TicketSessionManager } from './lib/ticket-session-manager.mjs';
 import { uploadIfNewErrors } from './lib/error-log-uploader.mjs';
+import { onFlushThreshold } from './lib/event-log-recorder.mjs';
 
 // ─── MCP Proxy ────────────────────────────────────────────
 
@@ -233,13 +234,19 @@ function runProxy(rl, config) {
         agentIdReady.then((agentId) => {
           presenceHeartbeat._real = new PresenceHeartbeat(config, agentId);
           presenceHeartbeat._real.start();
-          // v0.11.0: ship accumulated proxy.log errors so admins can see
-          // per-agent failures in AWB's web UI. Fire-and-forget + 10-min tick.
-          uploadIfNewErrors(config, agentId, '0.14.0').catch(() => {});
-          uploadTimer = setInterval(() => {
-            uploadIfNewErrors(config, agentId, '0.14.0').catch(() => {});
-          }, 10 * 60 * 1000);
+          // v0.15.0: 30-second periodic tick + threshold-driven immediate flush.
+          // Event-log entries need to reach the admin Agent Logs viewer fast
+          // enough to actually debug "did the plugin see this event?" — the
+          // old 10-minute cadence made the feature feel broken even when it
+          // worked. Errors still piggyback on the same upload so we don't
+          // multiply POSTs.
+          const fireUpload = () => uploadIfNewErrors(config, agentId, '0.15.0').catch(() => {});
+          fireUpload();
+          uploadTimer = setInterval(fireUpload, 30 * 1000);
           if (typeof uploadTimer.unref === 'function') uploadTimer.unref();
+          // Kick an out-of-band upload when the event buffer crosses 10 entries
+          // so a burst of SSE events doesn't sit around for 30s.
+          onFlushThreshold(fireUpload);
         });
         log('SSE event stream started (post-handshake)');
       }
