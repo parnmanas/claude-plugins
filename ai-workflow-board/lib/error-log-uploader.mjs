@@ -19,6 +19,15 @@ const DEFAULT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 /** Classify a raw log message. Returns null to skip (success/noise). */
 function classify(msg) {
+  // Skip our own internal traces BEFORE the /error|failed/i catch-all — the
+  // uploader's success line ("uploaded N entries (errors=M events=K)") would
+  // otherwise match on the literal word "errors" and get re-uploaded as a
+  // warn/misc entry on the next 30s tick, then logged again, ad infinitum.
+  // Same story for DIAG stdout.write traces and the bin-resolver log line.
+  if (/^\[uploader\]/.test(msg)) return null;
+  if (/^\[DIAG\]/.test(msg)) return null;
+  if (/^\[claude-bin\]/.test(msg)) return null;
+
   if (/^Uncaught error:|^Unhandled rejection:/.test(msg)) return { level: 'fatal', category: 'crash' };
   if (/^EXIT code=[1-9]/.test(msg)) return { level: 'fatal', category: 'crash' };
   if (/^SSE error:/.test(msg)) return { level: 'error', category: 'sse' };
