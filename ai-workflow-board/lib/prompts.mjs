@@ -13,7 +13,7 @@
  * - role_prompt is injected separately via --append-system-prompt (NOT here).
  * Produces the POSITIONAL prompt arg passed as the last argv to `claude --print`.
  */
-export function composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, fallbackTicketId, columnPrompt) {
+export function composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, fallbackTicketId, columnPrompt, extraInstructions) {
   const lines = [];
   lines.push('You are an AWB subagent responding to an assigned trigger.');
   lines.push('');
@@ -70,6 +70,10 @@ export function composeTriggerPrompt(ticket, rolePrompt, ticketPrompt, fallbackT
   lines.push('- Claim the ticket if not already claimed.');
   lines.push('- Leave a comment on the ticket when done describing what you did.');
   lines.push('- Move the ticket to the next column when the work is complete.');
+  if (extraInstructions) {
+    lines.push('');
+    lines.push(extraInstructions);
+  }
   return lines.join('\n');
 }
 
