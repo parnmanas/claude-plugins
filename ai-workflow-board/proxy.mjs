@@ -251,15 +251,17 @@ function runProxy(rl, config) {
 
   rl.on('close', async () => {
     // stdin close = parent Claude CLI went away (exit, terminal closed, crash).
-    // We tear down our own I/O but deliberately ORPHAN any running subagents —
-    // they were already dispatched and should finish their work. Killing them
-    // here was the cause of v0.6.7 "dispatch then immediate SIGTERM" losses.
-    log('stdin closed — orphaning subagents and exiting proxy');
-    eventStream?.stop();
-    presenceHeartbeat._real?.stop();
-    ticketPoller._real?.stop();
-    forwardSession.stop();
-    process.exit(0);
+    // v0.24.2: route through shutdownHandler to actually tear down subagents.
+    // The old "deliberately orphan" design leaked children + cfg files every
+    // time ralf-style harnesses cycled claude.exe every 5s: accumulated
+    // detached subagents couldn't ack their triggers (result events go to a
+    // dead parent), so the server kept returning the same pending triggers
+    // and the next proxy respawned them — a true infinite multiplication.
+    // v0.24.1's deferred initial poll tick already means short-lived proxies
+    // almost never have subagents to clean up here. SSE-driven dispatches
+    // during a 3s proxy window get killed, but the unacked trigger stays on
+    // the server and a real long-lived proxy picks it up cleanly.
+    await shutdownHandler('stdin-close');
   });
 
   log(`Proxy ready (server: ${config.url})`);
