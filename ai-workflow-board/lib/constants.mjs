@@ -18,13 +18,18 @@ export const RECONNECT_INITIAL_MS = 2000;
 export const RECONNECT_MAX_MS = 30000;
 export const REQUEST_TIMEOUT_MS = 30000;
 export const HEARTBEAT_INTERVAL_MS = 30_000;  // Phase 3 D-52 presence — must be < sweep's 90s threshold
+// SSE push is best-effort: connection drops, server-side filter regressions,
+// or subagent silent-exit can leave the agent unaware of pending work. The
+// poller closes that gap by pulling get_pending_triggers on a fixed interval
+// and dispatching anything the live ticket-session map doesn't already cover.
+export const TRIGGER_POLL_INTERVAL_MS = 30_000;
 
 export const CHANNEL_INSTRUCTIONS = [
   'This server uses push-based event delivery via SSE.',
   'You will receive <channel> events for all ticket activity:',
   '  - type="agent_trigger": A trigger assigned to you — claim the ticket, read it, and process it.',
   '  - type="board_update": A ticket was updated (comment added, status changed, field edited, etc.).',
-  'Do NOT poll or create cron jobs for get_pending_triggers or subscribe_events — events arrive automatically via push.',
+  'Events arrive automatically via push — you do not need to manually poll for them.',
 ].join('\n');
 
 // ─── Delegation Constants (Phase 4 D-55..D-75) ────────────

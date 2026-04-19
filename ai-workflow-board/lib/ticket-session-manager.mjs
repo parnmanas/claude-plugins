@@ -2,6 +2,8 @@
 
 import { BaseSessionManager } from './base-session-manager.mjs';
 import { composeTriggerPrompt } from './prompts.mjs';
+import { fireAndForgetTool } from './mcp-client.mjs';
+import { log } from './logging.mjs';
 
 /**
  * Keeps one Claude CLI child alive per ticket so that successive events
@@ -44,8 +46,12 @@ export class TicketSessionManager extends BaseSessionManager {
     const sess = this._getSession(spec.ticketId);
 
     if (sess) {
-      // Existing live session — send the trigger as a follow-up turn
+      // Existing live session — send the trigger as a follow-up turn.
+      // current_task is already set from the original spawn; just ack the
+      // new trigger so the server stops handing it to the poller.
       this._sendFollowUp(sess, this.#composeTriggerTurn(spec));
+      sess.lastTriggerId = spec.triggerId || sess.lastTriggerId;
+      this.#ackTrigger(spec.agentId, spec.triggerId);
       return { dispatched: true, pid: sess.pid };
     }
 
@@ -59,7 +65,55 @@ export class TicketSessionManager extends BaseSessionManager {
     );
     const spawned = await this._spawnSession(spec.ticketId, spec.rolePrompt || '', firstTurnText);
     if (!spawned) return { dispatched: false, reason: 'spawn_failed' };
+
+    // Stamp identity onto the session so the exit hook below (and any
+    // subsequent follow-up dispatches) can target the right agent/ticket.
+    spawned.agentId = spec.agentId || '';
+    spawned.lastTriggerId = spec.triggerId || '';
+
+    // Lifecycle signals — fire-and-forget so a transient MCP failure here
+    // never blocks the actual subagent work.
+    //   set_current_task: dashboard shows "processing" only now (real spawn),
+    //                     not when the trigger was queued. Cleared on exit.
+    //   acknowledge_trigger: stop the server from handing this trigger back
+    //                        via SSE / poller. Subagent work continues
+    //                        independently. Ack at dispatch (not at end)
+    //                        because the subagent has it in hand.
+    if (spawned.agentId) {
+      this.#setCurrentTask(spawned.agentId, spec.ticketId);
+      this.#ackTrigger(spawned.agentId, spec.triggerId);
+
+      // Tail the existing exit listener so we don't replace the wiring set
+      // up by base-session-manager's #wireExit. .once() + .once() compose.
+      spawned.child.once('exit', () => {
+        // Pass ticket_id so server only clears if current_task still points
+        // here — protects a follow-up task that might have replaced it.
+        fireAndForgetTool(this._config, 'clear_current_task', {
+          agent_id: spawned.agentId,
+          ticket_id: spec.ticketId,
+        });
+      });
+    } else {
+      log('[ticket-session] dispatched without agentId — skipping current_task signals');
+    }
+
     return { dispatched: true, pid: spawned.pid, firstTurn: true };
+  }
+
+  #setCurrentTask(agentId, ticketId) {
+    if (!agentId || !ticketId) return;
+    fireAndForgetTool(this._config, 'set_current_task', {
+      agent_id: agentId,
+      ticket_id: ticketId,
+    });
+  }
+
+  #ackTrigger(agentId, triggerId) {
+    if (!agentId || !triggerId) return;
+    fireAndForgetTool(this._config, 'acknowledge_trigger', {
+      trigger_id: triggerId,
+      agent_id: agentId,
+    });
   }
 
   /**

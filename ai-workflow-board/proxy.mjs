@@ -38,6 +38,7 @@ import { EventStream } from './lib/event-stream.mjs';
 import { SubagentManager } from './lib/subagent-manager.mjs';
 import { ChatSessionManager } from './lib/chat-session-manager.mjs';
 import { TicketSessionManager } from './lib/ticket-session-manager.mjs';
+import { TicketPoller } from './lib/ticket-poller.mjs';
 import { uploadIfNewErrors } from './lib/error-log-uploader.mjs';
 import { onFlushThreshold } from './lib/event-log-recorder.mjs';
 
@@ -110,6 +111,7 @@ function runProxy(rl, config) {
   let resolvedAgentId = null;
   const agentIdReady = resolveAgentId(config).then((id) => { resolvedAgentId = id; return id; });
   const presenceHeartbeat = { _real: null };
+  const ticketPoller = { _real: null };
   let uploadTimer = null;
 
   // Phase 4 Plan 04-02: instantiate SubagentManager. Plan 04-03 now wires #handleTrigger
@@ -145,6 +147,7 @@ function runProxy(rl, config) {
   const shutdownHandler = async (signal) => {
     log(`Proxy received ${signal} — terminating subagents`);
     presenceHeartbeat._real?.stop();
+    ticketPoller._real?.stop();
     forwardSession.stop();
     if (uploadTimer) { clearInterval(uploadTimer); uploadTimer = null; }
     eventStream?.stop();
@@ -196,13 +199,18 @@ function runProxy(rl, config) {
         agentIdReady.then((agentId) => {
           presenceHeartbeat._real = new PresenceHeartbeat(config, agentId);
           presenceHeartbeat._real.start();
+          // Pull-side reconciliation for missed SSE triggers + silent-exit
+          // subagents. Server's get_pending_triggers is the source of truth;
+          // poller spawns whatever the live ticket-session map doesn't cover.
+          ticketPoller._real = new TicketPoller(config, ticketSessionManager);
+          ticketPoller._real.start().catch((err) => log(`TicketPoller start failed: ${err.message}`));
           // v0.15.0: 30-second periodic tick + threshold-driven immediate flush.
           // Event-log entries need to reach the admin Agent Logs viewer fast
           // enough to actually debug "did the plugin see this event?" — the
           // old 10-minute cadence made the feature feel broken even when it
           // worked. Errors still piggyback on the same upload so we don't
           // multiply POSTs.
-          const fireUpload = () => uploadIfNewErrors(config, agentId, '0.21.0').catch(() => {});
+          const fireUpload = () => uploadIfNewErrors(config, agentId, '0.22.0').catch(() => {});
           fireUpload();
           uploadTimer = setInterval(fireUpload, 30 * 1000);
           if (typeof uploadTimer.unref === 'function') uploadTimer.unref();
@@ -249,6 +257,7 @@ function runProxy(rl, config) {
     log('stdin closed — orphaning subagents and exiting proxy');
     eventStream?.stop();
     presenceHeartbeat._real?.stop();
+    ticketPoller._real?.stop();
     forwardSession.stop();
     process.exit(0);
   });
