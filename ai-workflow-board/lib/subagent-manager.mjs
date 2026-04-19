@@ -58,10 +58,69 @@ export class SubagentManager {
       log(`SubagentManager: mkdir failed: ${err.message}`);
     }
     await this.#reconcileOnStart();
+    await this.#sweepOrphanCfgs();
     this.#sweepTimer = setInterval(() => this.#sweep(), TTL_SWEEP_INTERVAL_MS);
     // Prevent the sweep timer from keeping the event loop alive past proxy shutdown
     if (typeof this.#sweepTimer.unref === 'function') this.#sweepTimer.unref();
     log(`SubagentManager initialized (pidDir=${this.#pidDir}, cap=${this.#config.delegation.maxConcurrent}, ttl=${this.#config.delegation.ttlMinutes}min)`);
+  }
+
+  /**
+   * Delete cfg-*.json files left behind by dead proxies. v0.24.2: before this
+   * sweep the orphan-subagent design (v0.6.7–v0.24.1) guaranteed that every
+   * proxy that died while children ran left their MCP config files around,
+   * and they accumulated without bound (1000+ files per day observed).
+   *
+   * A cfg file is safe to delete when either:
+   *   - the pid whose spawn created it is no longer alive, OR
+   *   - /proc scan finds no running process with that cfg path on argv
+   *
+   * We intentionally sweep both SubagentManager-owned (cfg-…) and
+   * BaseSessionManager-owned (cfg-ticket-… / cfg-chat-…) files since they
+   * share the same directory and the session managers keep no persistent
+   * state across proxy restarts.
+   */
+  async #sweepOrphanCfgs() {
+    let files;
+    try {
+      files = await fsp.readdir(this.#pidDir);
+    } catch (err) {
+      log(`Orphan cfg sweep: readdir failed: ${err.message}`);
+      return;
+    }
+
+    // Build set of cfg paths still in use by live processes on this host.
+    const liveCfgs = new Set();
+    // (1) Records we just reconciled — their pids are alive, keep their cfgs.
+    for (const rec of this.#map.values()) {
+      if (rec.kind !== 'reservation' && rec.config_path) liveCfgs.add(rec.config_path);
+    }
+    // (2) /proc scan — covers orphans from other proxy generations whose
+    // persist entry was overwritten but whose child is still alive.
+    try {
+      const procEntries = await fsp.readdir('/proc');
+      for (const entry of procEntries) {
+        if (!/^\d+$/.test(entry)) continue;
+        try {
+          const cmdline = await fsp.readFile(`/proc/${entry}/cmdline`, 'utf8');
+          const parts = cmdline.split('\0');
+          const idx = parts.indexOf('--mcp-config');
+          if (idx >= 0 && parts[idx + 1]) liveCfgs.add(parts[idx + 1]);
+        } catch { /* process vanished mid-scan; ignore */ }
+      }
+    } catch { /* /proc missing (non-Linux) — rely on persist-reconciliation only */ }
+
+    let purged = 0;
+    for (const f of files) {
+      if (!f.startsWith('cfg-') || !f.endsWith('.json')) continue;
+      const path = join(this.#pidDir, f);
+      if (liveCfgs.has(path)) continue;
+      try {
+        await fsp.unlink(path);
+        purged++;
+      } catch { /* vanished; ignore */ }
+    }
+    if (purged > 0) log(`Orphan cfg sweep: purged ${purged} stale config file(s)`);
   }
 
   /** Count non-reservation records. True if room exists under maxConcurrent. */
