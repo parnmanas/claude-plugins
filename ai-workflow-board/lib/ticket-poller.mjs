@@ -71,14 +71,18 @@ export class TicketPoller {
       }
     }
     this.#stopped = false;
-    // Fire once immediately so a freshly-restarted plugin picks up any
-    // backlog without waiting one full interval.
-    this.#tick().catch((err) => log(`Ticket poll (initial) failed: ${err.message}`));
+    // No immediate initial tick. ralf-style harnesses spawn short-lived
+    // claude.exe processes (just tools/list then EOF) at 5-second cadence;
+    // an immediate tick on every proxy start re-dispatches every stuck
+    // pending trigger dozens of times a minute, each spawning a subagent
+    // that burns tokens. Wait one full interval — proxies that die before
+    // then contribute zero dispatches. A deliberate plugin restart pays a
+    // 30s backlog delay, which is acceptable.
     this.#timer = setInterval(() => {
       this.#tick().catch((err) => log(`Ticket poll failed: ${err.message}`));
     }, TRIGGER_POLL_INTERVAL_MS);
     this.#timer.unref?.();
-    log(`Ticket poller started (agent=${this.#agentId.slice(0, 8)} workspace=${this.#workspaceId.slice(0, 8)} interval=${TRIGGER_POLL_INTERVAL_MS / 1000}s)`);
+    log(`Ticket poller started (agent=${this.#agentId.slice(0, 8)} workspace=${this.#workspaceId.slice(0, 8)} interval=${TRIGGER_POLL_INTERVAL_MS / 1000}s, initial tick deferred)`);
   }
 
   async #resolveWorkspaceId() {
