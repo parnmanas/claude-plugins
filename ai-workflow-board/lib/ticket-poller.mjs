@@ -1,22 +1,37 @@
 // ─── Ticket Poller ────────────────────────────────────────
-// Periodic pull-side reconciliation for AgentTrigger delivery. SSE push is
-// best-effort: connection drops, server-side filter regressions, and the
-// "subagent silent-exits without acknowledging" pattern all lead to triggers
-// that exist in the DB with acknowledged_at IS NULL but never reach a
-// running subagent. The poller closes that gap by calling
-// get_pending_triggers on a fixed interval and dispatching anything the
-// live ticket-session map doesn't already cover.
+// Two paths per tick, executed in priority order:
 //
-// Importantly, this file holds NO routing/role/column logic. Server's
-// get_pending_triggers already knows which triggers belong to this agent
-// (it filters by agent_id + acknowledged_at IS NULL + expires_at > now).
-// We just spawn for whatever the server hands back.
+//   1. Busy path (pending-trigger retry). get_pending_triggers returns
+//      AgentTriggers the server already created but hasn't yet seen an ack
+//      for. Covers SSE drops, silent-exit subagents, and plugin restarts.
+//      Whenever this returns anything, we dispatch and stop — the agent
+//      already has real work queued up.
+//
+//   2. Idle path (routing reconciliation). When busy path is empty we ask
+//      the server "given the current board routing_config, which tickets
+//      would map a role this agent holds AND don't already have a pending
+//      trigger?" and fire a manual_trigger on each. This catches tickets
+//      that entered a column before the agent existed, columns whose
+//      routing was added after the fact, and any state shift that makes a
+//      previously-acked ticket actionable again.
+//
+// Zero column-name / status / role-list hardcoding lives here. Every
+// decision — which roles matter for which column, which tickets are
+// actionable — is resolved server-side off Board.routing_config. The plugin
+// just calls the tools and wakes the ticket-session manager.
 
 import { TRIGGER_POLL_INTERVAL_MS } from './constants.mjs';
 import { log } from './logging.mjs';
-import { callMcpTool, unwrapToolResult } from './mcp-client.mjs';
+import { callMcpTool, unwrapToolResult, fireAndForgetTool } from './mcp-client.mjs';
 import { fetchTicketContext } from './rest.mjs';
 import { loadAgentInfo } from './config.mjs';
+
+// Cooldown between manual_triggers for the same (ticket_id, role). Without
+// this an agent whose column_prompt returns "no action needed right now"
+// (e.g. promotion conditions not yet met) would be re-spawned every tick
+// wasting subagent turns. 5 minutes balances responsiveness to external
+// state shifts against spawn-storm avoidance.
+const ACTIONABLE_COOLDOWN_MS = 5 * 60_000;
 
 export class TicketPoller {
   #config;
@@ -26,6 +41,8 @@ export class TicketPoller {
   #timer = null;
   #stopped = false;
   #busy = false;
+
+  #actionableCooldown = new Map();
 
   constructor(config, ticketSessionManager) {
     this.#config = config;
@@ -92,60 +109,122 @@ export class TicketPoller {
     this.#busy = true;
 
     try {
-      const rpc = await callMcpTool(this.#config, 'get_pending_triggers', {
-        agent_id: this.#agentId,
-        workspace_id: this.#workspaceId,
-      }, { clientName: 'awb-ticket-poller' });
-      const result = unwrapToolResult(rpc);
-      if (result?.error) {
-        log(`Ticket poll: get_pending_triggers returned error: ${result.error}`);
-        return;
-      }
-      const triggers = Array.isArray(result) ? result : (result?.data || []);
-      if (!Array.isArray(triggers) || triggers.length === 0) return;
-
-      log(`Ticket poll: ${triggers.length} pending trigger(s)`);
-
-      for (const trigger of triggers) {
-        if (this.#stopped) return;
-        const ticketId = trigger.ticket_id;
-        const triggerId = trigger.id;
-        if (!ticketId || !triggerId) continue;
-
-        // We do NOT pre-filter on hasSession. dispatchTrigger handles both
-        // paths cleanly: alive session → follow-up turn (so a sleeping
-        // session is woken with the new trigger), no session → fresh spawn.
-        // Dedup inside the manager protects against the SSE-then-poll race
-        // for an identical trigger; that dedup is released on session exit
-        // so a silent / errored subagent's triggers become re-dispatchable.
-        try {
-          // Skip the ticket fetch when a session is already alive — it's
-          // about to receive a follow-up turn and can re-fetch via MCP if
-          // it actually needs fresh state. Saves a round-trip on the hot
-          // path (active sessions getting follow-ups every poll tick).
-          const ticket = this.#ticketSessionManager.hasSession?.(ticketId)
-            ? null
-            : await fetchTicketContext(this.#config, ticketId);
-          const result = await this.#ticketSessionManager.dispatchTrigger({
-            ticketId,
-            triggerId,
-            agentId: this.#agentId,
-            rolePrompt: trigger.role_prompt || '',
-            ticketPrompt: trigger.ticket_prompt || '',
-            columnPrompt: trigger.column_prompt || null,
-            ticket,
-          });
-          if (result?.dispatched) {
-            log(`Ticket poll dispatched: ticket=${ticketId} trigger=${triggerId}${result.firstTurn ? ' (new session)' : ' (follow-up)'}`);
-          } else if (result?.reason && result.reason !== 'duplicate_trigger') {
-            log(`Ticket poll dispatch declined: ticket=${ticketId} reason=${result.reason}`);
-          }
-        } catch (err) {
-          log(`Ticket poll dispatch failed: ticket=${ticketId} err=${err.message}`);
-        }
+      const dispatched = await this.#runBusyPath();
+      if (!dispatched && !this.#stopped) {
+        await this.#runIdlePath();
       }
     } finally {
       this.#busy = false;
+    }
+  }
+
+  /**
+   * Busy path — dispatch anything the server already has queued up for us.
+   * Returns true if at least one pending trigger was processed (idle path
+   * will be skipped for this tick).
+   */
+  async #runBusyPath() {
+    const rpc = await callMcpTool(this.#config, 'get_pending_triggers', {
+      agent_id: this.#agentId,
+      workspace_id: this.#workspaceId,
+    }, { clientName: 'awb-ticket-poller' });
+    const result = unwrapToolResult(rpc);
+    if (result?.error) {
+      log(`Ticket poll: get_pending_triggers returned error: ${result.error}`);
+      return false;
+    }
+    const triggers = Array.isArray(result) ? result : (result?.data || []);
+    if (!Array.isArray(triggers) || triggers.length === 0) return false;
+
+    log(`Ticket poll (busy): ${triggers.length} pending trigger(s)`);
+
+    for (const trigger of triggers) {
+      if (this.#stopped) return true;
+      const ticketId = trigger.ticket_id;
+      const triggerId = trigger.id;
+      if (!ticketId || !triggerId) continue;
+
+      try {
+        const ticket = this.#ticketSessionManager.hasSession?.(ticketId)
+          ? null
+          : await fetchTicketContext(this.#config, ticketId);
+        const dispatch = await this.#ticketSessionManager.dispatchTrigger({
+          ticketId,
+          triggerId,
+          agentId: this.#agentId,
+          rolePrompt: trigger.role_prompt || '',
+          ticketPrompt: trigger.ticket_prompt || '',
+          columnPrompt: trigger.column_prompt || null,
+          ticket,
+        });
+        if (dispatch?.dispatched) {
+          log(`Ticket poll dispatched: ticket=${ticketId} trigger=${triggerId}${dispatch.firstTurn ? ' (new session)' : ' (follow-up)'}`);
+        } else if (dispatch?.reason && dispatch.reason !== 'duplicate_trigger') {
+          log(`Ticket poll dispatch declined: ticket=${ticketId} reason=${dispatch.reason}`);
+        }
+      } catch (err) {
+        log(`Ticket poll dispatch failed: ticket=${ticketId} err=${err.message}`);
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Idle path — ask the server for (ticket, role) pairs that should wake
+   * this agent given the current board routing_config, minus anything that
+   * already has a pending AgentTrigger. For each eligible pair we fire
+   * manual_trigger; the server records the AgentTrigger row and the push /
+   * next-tick busy-path then dispatches normally.
+   *
+   * Column-name / status / role-whitelist logic lives on the server, keyed
+   * entirely off Board.routing_config. This method doesn't know the names
+   * of any columns.
+   */
+  async #runIdlePath() {
+    const rpc = await callMcpTool(this.#config, 'get_my_actionable_tickets', {
+      agent_id: this.#agentId,
+      workspace_id: this.#workspaceId,
+    }, { clientName: 'awb-ticket-poller-idle' });
+    const result = unwrapToolResult(rpc);
+    if (result?.error) {
+      log(`Ticket poll (idle): get_my_actionable_tickets error: ${result.error}`);
+      return;
+    }
+    const pairs = Array.isArray(result) ? result : (result?.data || []);
+    if (!Array.isArray(pairs) || pairs.length === 0) {
+      this.#gcCooldowns();
+      return;
+    }
+
+    const now = Date.now();
+    let fired = 0;
+    for (const pair of pairs) {
+      if (this.#stopped) return;
+      const ticketId = pair.ticket_id;
+      const role = pair.role;
+      if (!ticketId || !role) continue;
+      const key = `${ticketId}::${role}`;
+      const expiry = this.#actionableCooldown.get(key);
+      if (expiry && expiry > now) continue;
+
+      // Fire-and-forget: manual_trigger creates the AgentTrigger server-side
+      // which then flows back to us via SSE + (fallback) the next busy-path
+      // tick. We don't need the return value here — the row is the signal.
+      fireAndForgetTool(this.#config, 'manual_trigger', {
+        ticket_id: ticketId,
+        role,
+      });
+      this.#actionableCooldown.set(key, now + ACTIONABLE_COOLDOWN_MS);
+      fired++;
+    }
+    if (fired > 0) log(`Ticket poll (idle): ${fired} actionable ticket(s) manually triggered`);
+    this.#gcCooldowns();
+  }
+
+  #gcCooldowns() {
+    const now = Date.now();
+    for (const [k, v] of this.#actionableCooldown) {
+      if (v <= now) this.#actionableCooldown.delete(k);
     }
   }
 }
