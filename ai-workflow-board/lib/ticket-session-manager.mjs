@@ -35,28 +35,32 @@ export class TicketSessionManager extends BaseSessionManager {
   async dispatchTrigger(spec) {
     if (!spec.ticketId) return { dispatched: false, reason: 'no_ticket' };
 
-    // Dedup by triggerId
-    if (spec.triggerId) {
-      const dedupKey = `trigger:${spec.triggerId}`;
-      if (!this._rememberDedup(dedupKey)) {
-        return { dispatched: false, reason: 'duplicate_trigger' };
-      }
+    // Dedup by triggerId — scoped to a specific session's lifetime via
+    // _forgetDedup on exit (see #wireSessionLifecycle). Same key returning
+    // 'duplicate_trigger' here means the live session is already going to
+    // process this trigger; the poller's retry path becomes active again
+    // only after the session exits.
+    const dedupKey = spec.triggerId ? `trigger:${spec.triggerId}` : null;
+    if (dedupKey && !this._rememberDedup(dedupKey)) {
+      return { dispatched: false, reason: 'duplicate_trigger' };
     }
 
     const sess = this._getSession(spec.ticketId);
 
     if (sess) {
       // Existing live session — send the trigger as a follow-up turn.
-      // current_task is already set from the original spawn; just ack the
-      // new trigger so the server stops handing it to the poller.
+      // Replace the pending-ack target with this trigger so the next
+      // successful result acks the right one. set_current_task already
+      // fired from the original spawn; no need to repeat.
       this._sendFollowUp(sess, this.#composeTriggerTurn(spec));
-      sess.lastTriggerId = spec.triggerId || sess.lastTriggerId;
-      this.#ackTrigger(spec.agentId, spec.triggerId);
+      this.#trackTrigger(sess, spec.triggerId, spec.agentId);
       return { dispatched: true, pid: sess.pid };
     }
 
     // No live session — spawn. Check cap; LRU-evict on overflow.
     if (!this._ensureCapacity()) {
+      // Roll back the dedup so the next poll tick can retry once capacity frees up.
+      if (dedupKey) this._forgetDedup(dedupKey);
       return { dispatched: false, reason: 'cap_busy' };
     }
 
@@ -64,56 +68,72 @@ export class TicketSessionManager extends BaseSessionManager {
       spec.ticket, spec.rolePrompt || '', spec.ticketPrompt || '', spec.ticketId, spec.columnPrompt || null,
     );
     const spawned = await this._spawnSession(spec.ticketId, spec.rolePrompt || '', firstTurnText);
-    if (!spawned) return { dispatched: false, reason: 'spawn_failed' };
+    if (!spawned) {
+      if (dedupKey) this._forgetDedup(dedupKey);
+      return { dispatched: false, reason: 'spawn_failed' };
+    }
 
-    // Stamp identity onto the session so the exit hook below (and any
-    // subsequent follow-up dispatches) can target the right agent/ticket.
+    // Stamp identity onto the session and arm lifecycle hooks.
     spawned.agentId = spec.agentId || '';
-    spawned.lastTriggerId = spec.triggerId || '';
+    spawned.triggerKeys = [];      // dedup keys we hold; cleared on exit
+    spawned.pendingAckTriggerId = null; // last trigger waiting to be acked on result
 
-    // Lifecycle signals — fire-and-forget so a transient MCP failure here
-    // never blocks the actual subagent work.
-    //   set_current_task: dashboard shows "processing" only now (real spawn),
-    //                     not when the trigger was queued. Cleared on exit.
-    //   acknowledge_trigger: stop the server from handing this trigger back
-    //                        via SSE / poller. Subagent work continues
-    //                        independently. Ack at dispatch (not at end)
-    //                        because the subagent has it in hand.
+    this.#trackTrigger(spawned, spec.triggerId, spec.agentId);
+
     if (spawned.agentId) {
-      this.#setCurrentTask(spawned.agentId, spec.ticketId);
-      this.#ackTrigger(spawned.agentId, spec.triggerId);
+      // Dashboard "processing" badge — only flips on now that a real child
+      // is alive. Cleared by the exit hook below.
+      fireAndForgetTool(this._config, 'set_current_task', {
+        agent_id: spawned.agentId,
+        ticket_id: spec.ticketId,
+      });
+    } else {
+      log('[ticket-session] dispatched without agentId — skipping current_task / ack signals');
+    }
 
-      // Tail the existing exit listener so we don't replace the wiring set
-      // up by base-session-manager's #wireExit. .once() + .once() compose.
-      spawned.child.once('exit', () => {
-        // Pass ticket_id so server only clears if current_task still points
-        // here — protects a follow-up task that might have replaced it.
+    // Result hook: ack the latest trigger ONLY when a turn actually
+    // completed without error. Silent / errored exits leave the trigger
+    // unacknowledged so the poller retries.
+    spawned.onResult = (parsed) => {
+      const tid = spawned.pendingAckTriggerId;
+      if (!tid || !spawned.agentId) return;
+      if (parsed?.is_error) return;
+      fireAndForgetTool(this._config, 'acknowledge_trigger', {
+        trigger_id: tid,
+        agent_id: spawned.agentId,
+      });
+      // Clear so the next turn's result doesn't re-ack the same trigger.
+      // The next dispatch (follow-up or new trigger) sets a fresh one.
+      spawned.pendingAckTriggerId = null;
+    };
+
+    // Exit hook — runs after base-session-manager's #wireExit. Releases
+    // every dedup key the session held (so the poller can re-dispatch any
+    // unacknowledged trigger) and clears the dashboard badge.
+    spawned.child.once('exit', () => {
+      for (const k of spawned.triggerKeys) this._forgetDedup(k);
+      spawned.triggerKeys = [];
+      if (spawned.agentId) {
         fireAndForgetTool(this._config, 'clear_current_task', {
           agent_id: spawned.agentId,
           ticket_id: spec.ticketId,
         });
-      });
-    } else {
-      log('[ticket-session] dispatched without agentId — skipping current_task signals');
-    }
+      }
+    });
 
     return { dispatched: true, pid: spawned.pid, firstTurn: true };
   }
 
-  #setCurrentTask(agentId, ticketId) {
-    if (!agentId || !ticketId) return;
-    fireAndForgetTool(this._config, 'set_current_task', {
-      agent_id: agentId,
-      ticket_id: ticketId,
-    });
-  }
-
-  #ackTrigger(agentId, triggerId) {
-    if (!agentId || !triggerId) return;
-    fireAndForgetTool(this._config, 'acknowledge_trigger', {
-      trigger_id: triggerId,
-      agent_id: agentId,
-    });
+  /**
+   * Record the trigger on the session so the result hook can ack it and
+   * the exit hook can release its dedup entry.
+   */
+  #trackTrigger(sess, triggerId, agentId) {
+    if (!triggerId) return;
+    sess.triggerKeys ??= [];
+    sess.triggerKeys.push(`trigger:${triggerId}`);
+    sess.pendingAckTriggerId = triggerId;
+    if (agentId && !sess.agentId) sess.agentId = agentId;
   }
 
   /**

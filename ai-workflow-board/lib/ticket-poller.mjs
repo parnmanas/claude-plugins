@@ -112,16 +112,20 @@ export class TicketPoller {
         const triggerId = trigger.id;
         if (!ticketId || !triggerId) continue;
 
-        // Skip if a session is already alive for this ticket. The session
-        // will call acknowledge_trigger when it finishes; until then,
-        // re-dispatching would just dedup-collide on the trigger key anyway,
-        // but we save the round trip.
-        if (this.#ticketSessionManager.hasSession?.(ticketId)) {
-          continue;
-        }
-
+        // We do NOT pre-filter on hasSession. dispatchTrigger handles both
+        // paths cleanly: alive session → follow-up turn (so a sleeping
+        // session is woken with the new trigger), no session → fresh spawn.
+        // Dedup inside the manager protects against the SSE-then-poll race
+        // for an identical trigger; that dedup is released on session exit
+        // so a silent / errored subagent's triggers become re-dispatchable.
         try {
-          const ticket = await fetchTicketContext(this.#config, ticketId);
+          // Skip the ticket fetch when a session is already alive — it's
+          // about to receive a follow-up turn and can re-fetch via MCP if
+          // it actually needs fresh state. Saves a round-trip on the hot
+          // path (active sessions getting follow-ups every poll tick).
+          const ticket = this.#ticketSessionManager.hasSession?.(ticketId)
+            ? null
+            : await fetchTicketContext(this.#config, ticketId);
           const result = await this.#ticketSessionManager.dispatchTrigger({
             ticketId,
             triggerId,
@@ -132,7 +136,7 @@ export class TicketPoller {
             ticket,
           });
           if (result?.dispatched) {
-            log(`Ticket poll dispatched: ticket=${ticketId} trigger=${triggerId}${result.firstTurn ? ' (new session)' : ''}`);
+            log(`Ticket poll dispatched: ticket=${ticketId} trigger=${triggerId}${result.firstTurn ? ' (new session)' : ' (follow-up)'}`);
           } else if (result?.reason && result.reason !== 'duplicate_trigger') {
             log(`Ticket poll dispatch declined: ticket=${ticketId} reason=${result.reason}`);
           }

@@ -253,6 +253,12 @@ export class BaseSessionManager {
       }
     }
     if (parsedLine?.type === 'result') {
+      // Per-session hook: subclasses use this to ack triggers ONLY when the
+      // turn actually completed (so silent / errored exits remain
+      // unacknowledged and the poller can retry them).
+      try { sess.onResult?.(parsedLine); } catch (err) {
+        log(`${this.#logTag} onResult error: ${err.message}`);
+      }
       this.#endTurn(sess);
     }
   }
@@ -342,6 +348,19 @@ export class BaseSessionManager {
       this.#dedupSet.delete(old);
     }
     return true;
+  }
+
+  /**
+   * Drop a previously-remembered key so the same trigger/message can be
+   * dispatched again. Subclasses call this from session exit handlers — once
+   * the subagent for a key is gone, any unacknowledged triggers it carried
+   * must become re-dispatchable, otherwise the poller's retry path is dead
+   * for that trigger forever.
+   */
+  _forgetDedup(key) {
+    if (!this.#dedupSet.delete(key)) return;
+    const idx = this.#dedupQueue.indexOf(key);
+    if (idx >= 0) this.#dedupQueue.splice(idx, 1);
   }
 
   async stop() {
