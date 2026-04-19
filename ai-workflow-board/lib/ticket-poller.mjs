@@ -1,37 +1,44 @@
-// ─── Ticket Poller ────────────────────────────────────────
-// Two paths per tick, executed in priority order:
+// ─── Ticket Poller (v0.25.0 polling-based allocation) ─────
 //
-//   1. Busy path (pending-trigger retry). get_pending_triggers returns
-//      AgentTriggers the server already created but hasn't yet seen an ack
-//      for. Covers SSE drops, silent-exit subagents, and plugin restarts.
-//      Whenever this returns anything, we dispatch and stop — the agent
-//      already has real work queued up.
+// v0.25.0 replaces the old busy/idle split (get_pending_triggers +
+// get_my_actionable_tickets + manual_trigger) with a single 5-minute call
+// to get_allocated_tickets. The server side no longer persists triggers —
+// delivery is pure fire-and-forget SSE — so this poll is both the backstop
+// for missed SSE events AND the supervisor that detects silent subagents.
 //
-//   2. Idle path (routing reconciliation). When busy path is empty we ask
-//      the server "given the current board routing_config, which tickets
-//      would map a role this agent holds AND don't already have a pending
-//      trigger?" and fire a manual_trigger on each. This catches tickets
-//      that entered a column before the agent existed, columns whose
-//      routing was added after the fact, and any state shift that makes a
-//      previously-acked ticket actionable again.
+// Each tick:
+//   1. get_allocated_tickets → server returns every (ticket, role) pair
+//      where the agent holds a role in a non-terminal column, with a
+//      my_last_update_at timestamp per ticket (MAX of the agent's latest
+//      comment + latest activity-log row).
+//   2. Sort by [column_position DESC, priority_index ASC] so late-stage
+//      high-priority tickets drain before fresh backlog items start.
+//   3. For each row:
+//      a. No live session → spawn one, seeded with the trigger prompt and
+//         explicit instructions to post a progress comment every 20 min.
+//      b. Live session + my_last_update_at older than SESSION_SILENCE_WARN_MS
+//         → send a "30-min silence" follow-up turn (once). If the NEXT tick
+//         still shows silence past the threshold, kill the session so the
+//         following tick respawns a fresh one (escalation).
+//      c. Live session + last user turn > PROGRESS_PROMPT_INTERVAL_MS ago
+//         (independent of silence) → send a "post a progress comment now"
+//         follow-up so work-in-progress tickets keep the comment stream
+//         flowing. Uses session._lastUserTurnAt from the session manager.
 //
-// Zero column-name / status / role-list hardcoding lives here. Every
-// decision — which roles matter for which column, which tickets are
-// actionable — is resolved server-side off Board.routing_config. The plugin
-// just calls the tools and wakes the ticket-session manager.
+// Every session-state fields touched here (_warnedSilenceAt,
+// _lastProgressPromptAt, _lastUserTurnAt) live on the session record
+// returned by _getSession(). They're reset implicitly when the session
+// exits and a fresh one is spawned.
 
-import { TRIGGER_POLL_INTERVAL_MS } from './constants.mjs';
+import {
+  TRIGGER_POLL_INTERVAL_MS,
+  SESSION_SILENCE_WARN_MS,
+  PROGRESS_PROMPT_INTERVAL_MS,
+} from './constants.mjs';
 import { log } from './logging.mjs';
-import { callMcpTool, unwrapToolResult, fireAndForgetTool } from './mcp-client.mjs';
+import { callMcpTool, unwrapToolResult } from './mcp-client.mjs';
 import { fetchTicketContext } from './rest.mjs';
 import { loadAgentInfo } from './config.mjs';
-
-// Cooldown between manual_triggers for the same (ticket_id, role). Without
-// this an agent whose column_prompt returns "no action needed right now"
-// (e.g. promotion conditions not yet met) would be re-spawned every tick
-// wasting subagent turns. 5 minutes balances responsiveness to external
-// state shifts against spawn-storm avoidance.
-const ACTIONABLE_COOLDOWN_MS = 5 * 60_000;
 
 export class TicketPoller {
   #config;
@@ -41,8 +48,6 @@ export class TicketPoller {
   #timer = null;
   #stopped = false;
   #busy = false;
-
-  #actionableCooldown = new Map();
 
   constructor(config, ticketSessionManager) {
     this.#config = config;
@@ -62,8 +67,6 @@ export class TicketPoller {
       return;
     }
     if (!this.#workspaceId) {
-      // workspace_id is needed to scope get_pending_triggers. setup may not
-      // have persisted it; resolve once via whoami and cache in-memory.
       this.#workspaceId = await this.#resolveWorkspaceId();
       if (!this.#workspaceId) {
         log('Ticket poller skipped — workspace_id resolve via whoami failed');
@@ -71,13 +74,11 @@ export class TicketPoller {
       }
     }
     this.#stopped = false;
-    // No immediate initial tick. ralf-style harnesses spawn short-lived
-    // claude.exe processes (just tools/list then EOF) at 5-second cadence;
-    // an immediate tick on every proxy start re-dispatches every stuck
-    // pending trigger dozens of times a minute, each spawning a subagent
-    // that burns tokens. Wait one full interval — proxies that die before
-    // then contribute zero dispatches. A deliberate plugin restart pays a
-    // 30s backlog delay, which is acceptable.
+    // Deferred initial tick. The proxy runs under ralf-style harnesses that
+    // spawn a short-lived claude.exe every 5 seconds just to do tools/list —
+    // if we tick on start, every one of those 3-second proxies would dispatch
+    // before stdin closes. Waiting one full interval means only the genuinely
+    // long-lived proxy (the one backing a real Claude session) fires the poll.
     this.#timer = setInterval(() => {
       this.#tick().catch((err) => log(`Ticket poll failed: ${err.message}`));
     }, TRIGGER_POLL_INTERVAL_MS);
@@ -107,128 +108,172 @@ export class TicketPoller {
 
   async #tick() {
     if (this.#stopped) return;
-    // Single-flight: if a previous tick is still working (slow MCP, slow
-    // spawn), skip this one rather than stacking duplicate dispatches.
     if (this.#busy) return;
     this.#busy = true;
-
     try {
-      const dispatched = await this.#runBusyPath();
-      if (!dispatched && !this.#stopped) {
-        await this.#runIdlePath();
-      }
+      await this.#runAllocationPass();
     } finally {
       this.#busy = false;
     }
   }
 
-  /**
-   * Busy path — dispatch anything the server already has queued up for us.
-   * Returns true if at least one pending trigger was processed (idle path
-   * will be skipped for this tick).
-   */
-  async #runBusyPath() {
-    const rpc = await callMcpTool(this.#config, 'get_pending_triggers', {
+  async #runAllocationPass() {
+    const rpc = await callMcpTool(this.#config, 'get_allocated_tickets', {
       agent_id: this.#agentId,
       workspace_id: this.#workspaceId,
     }, { clientName: 'awb-ticket-poller' });
     const result = unwrapToolResult(rpc);
     if (result?.error) {
-      log(`Ticket poll: get_pending_triggers returned error: ${result.error}`);
-      return false;
+      log(`Ticket poll: get_allocated_tickets error: ${result.error}`);
+      return;
     }
-    const triggers = Array.isArray(result) ? result : (result?.data || []);
-    if (!Array.isArray(triggers) || triggers.length === 0) return false;
+    const rowsRaw = Array.isArray(result) ? result : (result?.data || []);
+    if (!Array.isArray(rowsRaw) || rowsRaw.length === 0) return;
 
-    log(`Ticket poll (busy): ${triggers.length} pending trigger(s)`);
+    // Sort: late-stage columns drain first; within a column, high priority first.
+    // priority_index is authoritative (server computed it from the same list the
+    // plugin would use locally — ['critical','high','medium','low']).
+    const rows = [...rowsRaw].sort((a, b) => {
+      const colDelta = (b.column_position ?? 0) - (a.column_position ?? 0);
+      if (colDelta !== 0) return colDelta;
+      return (a.priority_index ?? 99) - (b.priority_index ?? 99);
+    });
 
-    for (const trigger of triggers) {
-      if (this.#stopped) return true;
-      const ticketId = trigger.ticket_id;
-      const triggerId = trigger.id;
-      if (!ticketId || !triggerId) continue;
+    const now = Date.now();
+    log(`Ticket poll: ${rows.length} allocated ticket(s)`);
+
+    for (const row of rows) {
+      if (this.#stopped) return;
+      const ticketId = row.ticket_id;
+      if (!ticketId) continue;
 
       try {
-        const ticket = this.#ticketSessionManager.hasSession?.(ticketId)
-          ? null
-          : await fetchTicketContext(this.#config, ticketId);
-        const dispatch = await this.#ticketSessionManager.dispatchTrigger({
-          ticketId,
-          triggerId,
-          agentId: this.#agentId,
-          rolePrompt: trigger.role_prompt || '',
-          ticketPrompt: trigger.ticket_prompt || '',
-          columnPrompt: trigger.column_prompt || null,
-          ticket,
-        });
-        if (dispatch?.dispatched) {
-          log(`Ticket poll dispatched: ticket=${ticketId} trigger=${triggerId}${dispatch.firstTurn ? ' (new session)' : ' (follow-up)'}`);
-        } else if (dispatch?.reason && dispatch.reason !== 'duplicate_trigger') {
-          log(`Ticket poll dispatch declined: ticket=${ticketId} reason=${dispatch.reason}`);
-        }
+        await this.#handleAllocatedTicket(row, now);
       } catch (err) {
-        log(`Ticket poll dispatch failed: ticket=${ticketId} err=${err.message}`);
+        log(`Ticket poll handler failed: ticket=${ticketId} err=${err.message}`);
       }
     }
-    return true;
   }
 
-  /**
-   * Idle path — ask the server for (ticket, role) pairs that should wake
-   * this agent given the current board routing_config, minus anything that
-   * already has a pending AgentTrigger. For each eligible pair we fire
-   * manual_trigger; the server records the AgentTrigger row and the push /
-   * next-tick busy-path then dispatches normally.
-   *
-   * Column-name / status / role-whitelist logic lives on the server, keyed
-   * entirely off Board.routing_config. This method doesn't know the names
-   * of any columns.
-   */
-  async #runIdlePath() {
-    const rpc = await callMcpTool(this.#config, 'get_my_actionable_tickets', {
-      agent_id: this.#agentId,
-      workspace_id: this.#workspaceId,
-    }, { clientName: 'awb-ticket-poller-idle' });
-    const result = unwrapToolResult(rpc);
-    if (result?.error) {
-      log(`Ticket poll (idle): get_my_actionable_tickets error: ${result.error}`);
-      return;
-    }
-    const pairs = Array.isArray(result) ? result : (result?.data || []);
-    if (!Array.isArray(pairs) || pairs.length === 0) {
-      this.#gcCooldowns();
+  async #handleAllocatedTicket(row, nowMs) {
+    const ticketId = row.ticket_id;
+    const role = row.role;
+    const lastUpdateAt = row.my_last_update_at ? Date.parse(row.my_last_update_at) : 0;
+    const silenceMs = lastUpdateAt > 0 ? (nowMs - lastUpdateAt) : Infinity;
+
+    const sess = this.#ticketSessionManager._getSession?.(ticketId);
+
+    if (!sess) {
+      // No live session — spawn a fresh one with the full context and
+      // progress-comment instructions.
+      await this.#spawnFreshSession(row);
       return;
     }
 
-    const now = Date.now();
-    let fired = 0;
-    for (const pair of pairs) {
-      if (this.#stopped) return;
-      const ticketId = pair.ticket_id;
-      const role = pair.role;
-      if (!ticketId || !role) continue;
-      const key = `${ticketId}::${role}`;
-      const expiry = this.#actionableCooldown.get(key);
-      if (expiry && expiry > now) continue;
+    // Live session — decide between escalation, silence-warning, or progress-forced prompt.
 
-      // Fire-and-forget: manual_trigger creates the AgentTrigger server-side
-      // which then flows back to us via SSE + (fallback) the next busy-path
-      // tick. We don't need the return value here — the row is the signal.
-      fireAndForgetTool(this.#config, 'manual_trigger', {
-        ticket_id: ticketId,
-        role,
-      });
-      this.#actionableCooldown.set(key, now + ACTIONABLE_COOLDOWN_MS);
-      fired++;
+    // Escalation: we warned in a prior tick (_warnedSilenceAt is set), we're
+    // still past threshold, and the warning has aged at least one poll
+    // interval. Kill the session; next tick's "no session" branch respawns.
+    if (
+      sess._warnedSilenceAt
+      && silenceMs > SESSION_SILENCE_WARN_MS
+      && (nowMs - sess._warnedSilenceAt) >= TRIGGER_POLL_INTERVAL_MS * 0.9
+    ) {
+      log(`Ticket poll: escalating — killing silent session ticket=${ticketId} silenceMs=${silenceMs}`);
+      try { sess.child.stdin.end(); } catch { /* already closed */ }
+      // next tick will respawn; don't send any turn here.
+      return;
     }
-    if (fired > 0) log(`Ticket poll (idle): ${fired} actionable ticket(s) manually triggered`);
-    this.#gcCooldowns();
+
+    // First-level silence warning.
+    if (silenceMs > SESSION_SILENCE_WARN_MS && !sess._warnedSilenceAt) {
+      log(`Ticket poll: silence warning ticket=${ticketId} silenceMs=${silenceMs}`);
+      this.#ticketSessionManager._sendFollowUp(sess, this.#composeSilencePrompt(silenceMs), { checkMaxTurns: false });
+      sess._warnedSilenceAt = nowMs;
+      return;
+    }
+
+    // If activity has resumed (silence below threshold) clear the warn flag so
+    // the next silence round can warn again, not escalate straight to kill.
+    if (silenceMs <= SESSION_SILENCE_WARN_MS && sess._warnedSilenceAt) {
+      sess._warnedSilenceAt = null;
+    }
+
+    // Forced progress prompt: session hasn't been nudged in 20 min. Uses
+    // lastTouchedAt from the session record (maintained by _sendFollowUp).
+    const lastTurnAt = sess.lastTouchedAt || sess.startedAt || nowMs;
+    const sinceProgressPromptMs = sess._lastProgressPromptAt
+      ? (nowMs - sess._lastProgressPromptAt)
+      : Infinity;
+    if (
+      (nowMs - lastTurnAt) > PROGRESS_PROMPT_INTERVAL_MS
+      && sinceProgressPromptMs > PROGRESS_PROMPT_INTERVAL_MS
+    ) {
+      log(`Ticket poll: 20-min progress prompt ticket=${ticketId}`);
+      this.#ticketSessionManager._sendFollowUp(sess, this.#composeProgressPrompt(), { checkMaxTurns: false });
+      sess._lastProgressPromptAt = nowMs;
+    }
   }
 
-  #gcCooldowns() {
-    const now = Date.now();
-    for (const [k, v] of this.#actionableCooldown) {
-      if (v <= now) this.#actionableCooldown.delete(k);
+  async #spawnFreshSession(row) {
+    const ticketId = row.ticket_id;
+    const role = row.role;
+
+    // Full ticket context for the initial prompt. The server didn't send the
+    // role_prompt / ticket_prompt / column_prompt in the allocation list (to
+    // keep get_allocated_tickets cheap), so we compose via the existing
+    // trigger-context path: fetchTicketContext + the session manager's
+    // spawn-side prompt composer. dispatchTrigger handles the spawn-or-follow
+    // decision; with no live session it'll spawn.
+    const ticket = await fetchTicketContext(this.#config, ticketId);
+    const rolePrompt = row.role_prompt || ''; // falls back to empty; role knowledge is in agent.role_prompt on the child too
+    const ticketPrompt = row.ticket_prompt || '';
+    const columnPrompt = row.column_prompt || null;
+
+    // Synthetic trigger_id — no server row. Dedup is a no-op against the
+    // live-session map, which is the only dedup that matters now.
+    const triggerId = `poll:${ticketId}:${Date.now()}`;
+
+    const dispatch = await this.#ticketSessionManager.dispatchTrigger({
+      ticketId,
+      triggerId,
+      agentId: this.#agentId,
+      rolePrompt,
+      ticketPrompt,
+      columnPrompt,
+      ticket,
+      // v0.25.0: ask the subagent to leave a progress comment every 20 minutes
+      // so the polling supervisor can see forward motion.
+      extraInstructions: 'IMPORTANT: While working on this ticket, post a short progress comment (via mcp__awb__add_comment) at least every 20 minutes, even if the update is just "still thinking about X" or "running tests on Y". This gives the supervisor a heartbeat — silence beyond 30 minutes is treated as an error and you may be interrupted with a status-check prompt.',
+    });
+
+    if (dispatch?.dispatched) {
+      log(`Ticket poll spawned: ticket=${ticketId} role=${role} pid=${dispatch.pid}${dispatch.firstTurn ? ' (new)' : ''}`);
+    } else if (dispatch?.reason && dispatch.reason !== 'duplicate_trigger') {
+      log(`Ticket poll spawn declined: ticket=${ticketId} reason=${dispatch.reason}`);
     }
+  }
+
+  #composeSilencePrompt(silenceMs) {
+    const minutes = Math.round(silenceMs / 60_000);
+    return [
+      `[Supervisor] You have not posted any update to this ticket in ~${minutes} minutes.`,
+      '',
+      'Post a progress comment NOW explaining:',
+      '  - what you are currently doing (or what you are blocked on)',
+      '  - what you have completed so far',
+      '  - an estimate of time-to-done or what help you need',
+      '',
+      'Use mcp__awb__add_comment. If you are actually done, move the ticket to the next column via mcp__awb__move_ticket. Silence beyond another 5 minutes will cause your session to be killed and restarted.',
+    ].join('\n');
+  }
+
+  #composeProgressPrompt() {
+    return [
+      '[Supervisor] 20-minute progress checkpoint.',
+      '',
+      'Post a short comment (via mcp__awb__add_comment) summarising what you have done since the last update and what you are working on now. One or two sentences is fine — the goal is a visible heartbeat, not a report.',
+    ].join('\n');
   }
 }

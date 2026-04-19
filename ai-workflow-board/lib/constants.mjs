@@ -18,11 +18,20 @@ export const RECONNECT_INITIAL_MS = 2000;
 export const RECONNECT_MAX_MS = 30000;
 export const REQUEST_TIMEOUT_MS = 30000;
 export const HEARTBEAT_INTERVAL_MS = 30_000;  // Phase 3 D-52 presence — must be < sweep's 90s threshold
-// SSE push is best-effort: connection drops, server-side filter regressions,
-// or subagent silent-exit can leave the agent unaware of pending work. The
-// poller closes that gap by pulling get_pending_triggers on a fixed interval
-// and dispatching anything the live ticket-session map doesn't already cover.
-export const TRIGGER_POLL_INTERVAL_MS = 30_000;
+// v0.25.0: fallback poll cadence. Primary delivery is SSE agent_trigger
+// (fire-and-forget — server no longer persists triggers). This poll hits
+// get_allocated_tickets every 5 minutes to catch anything the SSE channel
+// dropped, to detect silent subagents (30-min no-update), and to drive the
+// 20-minute progress-comment cadence.
+export const TRIGGER_POLL_INTERVAL_MS = 5 * 60_000;
+// v0.25.0: a live session that hasn't produced an update in this long gets a
+// "status report" follow-up turn. If the next poll tick (5 min later) still
+// shows no update, the session is killed and respawned.
+export const SESSION_SILENCE_WARN_MS = 30 * 60_000;
+// v0.25.0: live sessions that haven't been sent a turn in this long get a
+// forced "post a progress comment now" follow-up, independent of silence.
+// Keeps the ticket's agent-comment stream flowing during long subagent work.
+export const PROGRESS_PROMPT_INTERVAL_MS = 20 * 60_000;
 
 export const CHANNEL_INSTRUCTIONS = [
   'This server uses push-based event delivery via SSE.',
