@@ -66,15 +66,6 @@ export class BaseSessionManager {
   }
 
   /**
-   * Public predicate: is there a live session for this key right now? Used by
-   * the ticket-poller to skip re-dispatching a trigger when the agent is
-   * already actively working on the ticket.
-   */
-  hasSession(sessionKey) {
-    return this.#sessions.has(sessionKey);
-  }
-
-  /**
    * Ensure there is capacity for a new session. LRU-evict oldest-idle on
    * overflow. Returns true when a new session may be spawned.
    */

@@ -29,14 +29,14 @@ export class TicketSessionManager extends BaseSessionManager {
 
   /**
    * Dispatch a trigger into the ticket's live session, spawning one if needed.
-   * spec = { ticketId, triggerId, agentId, rolePrompt, ticketPrompt, columnPrompt, ticket, extraInstructions? }
+   * spec = { ticketId, triggerId, agentId, rolePrompt, ticketPrompt, columnPrompt, ticket, extraInstructions?, forceRespawn? }
    * Returns { dispatched: boolean, pid?: number, reason?: string, firstTurn?: boolean }
    *
-   * v0.25.0: no more acknowledge_trigger. The server no longer persists
-   * AgentTrigger rows — delivery is fire-and-forget SSE and the 5-minute
-   * get_allocated_tickets poll is the only reconciliation. Dedup is still
-   * useful to prevent SSE+poll double-dispatch of the same trigger_id into
-   * a live session.
+   * v0.26.0: server-side TicketSupervisorService replaces the plugin's former
+   * 5-minute get_allocated_tickets poll. Dedup is still useful to prevent
+   * SSE double-dispatch of the same trigger_id into a live session.
+   * `spec.forceRespawn === true` is the escalation signal: kill any live
+   * session first so the spawn branch produces a fresh child with new context.
    */
   async dispatchTrigger(spec) {
     if (!spec.ticketId) return { dispatched: false, reason: 'no_ticket' };
@@ -44,6 +44,17 @@ export class TicketSessionManager extends BaseSessionManager {
     const dedupKey = spec.triggerId ? `trigger:${spec.triggerId}` : null;
     if (dedupKey && !this._rememberDedup(dedupKey)) {
       return { dispatched: false, reason: 'duplicate_trigger' };
+    }
+
+    if (spec.forceRespawn === true) {
+      const prev = this._getSession(spec.ticketId);
+      if (prev) {
+        log(`Ticket session force-respawn requested: ticket=${spec.ticketId} pid=${prev.pid}`);
+        if (prev.idleTimer) { clearTimeout(prev.idleTimer); prev.idleTimer = null; }
+        try { prev.child.stdin.end(); } catch { /* already closed */ }
+        try { process.kill(prev.pid, 'SIGTERM'); } catch { /* already dead */ }
+        this._sessions.delete(spec.ticketId);
+      }
     }
 
     const sess = this._getSession(spec.ticketId);

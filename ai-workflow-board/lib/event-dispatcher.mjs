@@ -127,6 +127,7 @@ export class EventDispatcher {
           ticketPrompt,
           columnPrompt,
           ticket,
+          forceRespawn: ev.force_respawn === true,
         });
 
         if (result.dispatched) {

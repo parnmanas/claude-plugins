@@ -1,7 +1,7 @@
 // ─── MCP HTTP client helper ───────────────────────────────
 // Thin wrapper around AWB's Streamable HTTP /mcp endpoint for short-lived
-// JSON-RPC sessions. Used by presence-heartbeat, ticket-poller, and the
-// session-manager lifecycle hooks (set/clear current_task, ack triggers).
+// JSON-RPC sessions. Used by presence-heartbeat and session-manager
+// lifecycle hooks (set/clear current_task).
 //
 // Each call opens a fresh session: initialize → notifications/initialized →
 // tools/call → DELETE. Cheaper than holding a persistent session and avoids
