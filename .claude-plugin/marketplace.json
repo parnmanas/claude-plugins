@@ -8,12 +8,6 @@
   },
   "plugins": [
     {
-      "name": "discord",
-      "description": "Discord channel for Claude Code - messaging bridge with built-in access control.",
-      "category": "messaging",
-      "source": "./discord"
-    },
-    {
       "name": "claude-self",
       "description": "Claude process introspection and lifecycle control - inspect, kill, and clear (fresh restart).",
       "category": "development",
