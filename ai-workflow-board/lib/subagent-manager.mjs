@@ -191,12 +191,20 @@ export class SubagentManager {
       await fsp.mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
 
       // CRITICAL (Pitfall 1): wrapper shape. Bare {serverName: {...}} is REJECTED.
+      // X-AWB-Client-Type: subagent signals to the server that this session is a
+      // subagent spawning directly via Claude CLI (not through proxy.mjs), so the
+      // server's proxy schemaVersion gate should be skipped. Without this header,
+      // the server rejects initialize with -32000 "proxy schemaVersion mismatch"
+      // and no mcp__awb__* tools register.
       const mcpConfig = {
         mcpServers: {
           awb: {
             type: 'http',
             url: `${this.#config.url.replace(/\/$/, '')}/mcp`,
-            headers: { Authorization: `Bearer ${this.#config.apiKey}` },
+            headers: {
+              Authorization: `Bearer ${this.#config.apiKey}`,
+              'X-AWB-Client-Type': 'subagent',
+            },
           },
         },
       };
