@@ -56,13 +56,30 @@ export class FsBrowser {
    * Never throws — errors are mapped to structured codes.
    */
   async handle(req) {
-    if (!this.enabled || this.roots.length === 0) {
-      return { ok: false, error: 'File browsing is disabled on this agent', code: 'FS_BROWSER_DISABLED' };
-    }
     if (!req || typeof req !== 'object') {
       return { ok: false, error: 'Malformed request', code: 'PATH_INVALID' };
     }
     const op = req.op;
+
+    // `roots` op reports configured scope + cwd without touching the filesystem
+    // beyond its own process, so it runs before the disabled/enabled gate. The
+    // UI needs this response even when roots are empty so it can render a
+    // clear "fs_browser is disabled on this agent" message instead of a
+    // generic error.
+    if (op === 'roots') {
+      return {
+        ok: true,
+        data: {
+          cwd: process.cwd(),
+          roots: this.roots.slice(),
+          enabled: this.enabled && this.roots.length > 0,
+        },
+      };
+    }
+
+    if (!this.enabled || this.roots.length === 0) {
+      return { ok: false, error: 'File browsing is disabled on this agent', code: 'FS_BROWSER_DISABLED' };
+    }
     const rawPath = req.path;
     if (typeof rawPath !== 'string' || !rawPath) {
       return { ok: false, error: 'path is required', code: 'PATH_INVALID' };
