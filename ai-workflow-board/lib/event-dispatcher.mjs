@@ -121,6 +121,11 @@ export class EventDispatcher {
 
         const result = await this.#ticketSessionManager.dispatchTrigger({
           ticketId: ev.ticket_id || '',
+          // Flatten contract: agent_trigger events carry role in `action`
+          // (see server-side event-registry.ts flatten). The session key
+          // is composite (ticketId + role) so same-agent-multiple-roles
+          // gets a dedicated subagent per role.
+          role: ev.action || '',
           triggerId: ev.field_changed || '',
           agentId: ev.actor_name || '',
           rolePrompt,
