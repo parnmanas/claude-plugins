@@ -40,6 +40,7 @@ import { ChatSessionManager } from './lib/chat-session-manager.mjs';
 import { TicketSessionManager } from './lib/ticket-session-manager.mjs';
 import { uploadIfNewErrors } from './lib/error-log-uploader.mjs';
 import { onFlushThreshold } from './lib/event-log-recorder.mjs';
+import { cleanupOrphanSubagents } from './lib/orphan-cleanup.mjs';
 
 // ─── MCP Proxy ────────────────────────────────────────────
 //
@@ -111,6 +112,20 @@ function runProxy(rl, config) {
   const agentIdReady = resolveAgentId(config).then((id) => { resolvedAgentId = id; return id; });
   const presenceHeartbeat = { _real: null };
   let uploadTimer = null;
+
+  // Reap orphaned subagents from previous proxy runs. When the proxy dies
+  // hard (SIGKILL / crash / OS reboot), the children it spawned survive
+  // because they're `detached: true` + unref()'d. Each spawn writes a
+  // .pid sidecar next to its mcp-config tempfile; this sweep reads those
+  // sidecars and SIGTERMs any pid that's still alive, then unlinks both
+  // files. Fire-and-forget: if this fails, log it but don't block the
+  // normal proxy boot — we can't leave the user unable to connect just
+  // because stale-file cleanup hit an edge case.
+  cleanupOrphanSubagents()
+    .then((r) => {
+      if (r.scanned > 0) log(`Orphan subagent cleanup: scanned=${r.scanned} reaped=${r.reaped}`);
+    })
+    .catch((err) => log(`Orphan subagent cleanup failed: ${err.message}`));
 
   // Phase 4 Plan 04-02: instantiate SubagentManager. Plan 04-03 now wires #handleTrigger
   // and #handleChatRequest consumers + the onExit completion notification below.

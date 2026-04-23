@@ -106,6 +106,14 @@ export class BaseSessionManager {
       };
       await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 
+      // Pid sidecar — written AFTER spawn so it reflects the real child pid.
+      // Used by cleanupOrphanSubagents() on proxy startup to reap survivors
+      // of a hard proxy crash (SIGKILL / OS reboot / host process vanish).
+      // Without a sidecar we'd have no way to tie a leftover cfg file back
+      // to a pid, and `detached: true` + `unref()` means these children
+      // survive the proxy's death.
+      const pidPath = configPath.replace(/\.json$/, '.pid');
+
       const args = [
         '--verbose',
         '--input-format', 'stream-json',
@@ -138,12 +146,16 @@ export class BaseSessionManager {
         await fsp.unlink(configPath).catch(() => {});
         return null;
       }
+      // Best-effort: if this write fails we simply lose the orphan-cleanup
+      // safety net for THIS subagent, nothing worse.
+      await fsp.writeFile(pidPath, String(child.pid), { mode: 0o600 }).catch(() => {});
 
       const sess = {
         [this.#keyField]: sessionKey,
         pid: child.pid,
         child,
         configPath,
+        pidPath,
         turnCount: 0,
         startedAt: Date.now(),
         lastTouchedAt: Date.now(),
@@ -299,6 +311,9 @@ export class BaseSessionManager {
       if (this.#sessions.get(key) === sess) this.#sessions.delete(key);
       if (sess.configPath) {
         try { await fsp.unlink(sess.configPath); } catch { /* best-effort */ }
+      }
+      if (sess.pidPath) {
+        try { await fsp.unlink(sess.pidPath); } catch { /* best-effort */ }
       }
     });
     sess.child.once('error', (err) => log(`${this.#logTag} child error pid=${sess.pid}: ${err.message}`));

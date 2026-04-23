@@ -42,7 +42,12 @@ export const SUBAGENTS_PERSIST_PATH = join(
 );
 export const DELEGATION_DEFAULTS = Object.freeze({
   enabled: true,              // D-59: default-on; consumers still gated by Plan 04-03
-  maxConcurrent: 5,           // D-63
+  // Raised from 5 → 15 in v0.29.x because per-role session split (a single
+  // ticket may now occupy up to 3 slots — assignee/reporter/reviewer) made
+  // 5 too tight: three parallel active tickets already saturated the cap.
+  // 15 gives ~5 concurrent tickets × 3 roles headroom. Users hitting this
+  // can raise it further via config.delegation.maxConcurrent.
+  maxConcurrent: 15,          // D-63
   ttlMinutes: 15,             // D-67 (trigger subagents only)
   claudeBin: 'claude',        // D-75 — overridable for test stubs
   appendSystemPromptMode: 'role_only', // D-75 — reserved for Plan 04-03 prompt composition
