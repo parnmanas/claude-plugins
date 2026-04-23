@@ -21,11 +21,18 @@ const BINARY_SNIFF_BYTES = 512;
 export class FsBrowser {
   /**
    * @param {object} config loaded channel config
-   * @param {object} fsSection config.fs_browser — { enabled, roots }
+   * @param {object} fsSection config.fs_browser — { roots, enabled? }
+   *
+   * Enable semantics:
+   *   - fs_browser absent in config → off (no opt-in).
+   *   - fs_browser present → on by default; set `enabled: false` only to
+   *     disable temporarily without removing the roots list.
+   *   - Empty roots still blocks every request at the scope check — roots is
+   *     the real gate; `enabled` is an escape hatch.
    */
   constructor(config, fsSection) {
     this.config = config;
-    this.enabled = !!fsSection?.enabled;
+    this.enabled = !!fsSection && fsSection.enabled !== false;
     this.rawRoots = Array.isArray(fsSection?.roots) ? fsSection.roots.filter((r) => typeof r === 'string' && r) : [];
     // Realpath the roots once at construction. Broken/missing roots are
     // dropped with a warning — we don't want a typo to silently grant
@@ -45,7 +52,7 @@ export class FsBrowser {
       }
     }
     if (this.enabled && this.roots.length === 0) {
-      log('[fs-browser] fs_browser.enabled=true but no valid roots — requests will be denied');
+      log('[fs-browser] fs_browser section present but no valid roots — requests will be denied');
     } else if (this.enabled) {
       log(`[fs-browser] enabled with ${this.roots.length} root(s): ${this.roots.join(', ')}`);
     }
