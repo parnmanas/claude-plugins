@@ -16,7 +16,7 @@
 
 import { log, sendChannelEvent } from './logging.mjs';
 import { loadAgentInfo } from './config.mjs';
-import { fetchTicketContext, fetchChatRoomHistory } from './rest.mjs';
+import { fetchTicketContext, fetchChatRoomHistory, postFsResponse } from './rest.mjs';
 import {
   composeTriggerPrompt,
   composeChatPrompt,
@@ -30,6 +30,7 @@ export class EventDispatcher {
   #subagentManager;          // Phase 4 Plan 04-03 — spawn target (may be null)
   #chatSessionManager;       // v0.7.0 — persistent per-room chat sessions (may be null)
   #ticketSessionManager;     // v0.8.0 — persistent per-ticket sessions (may be null)
+  #fsBrowser;                // v0.31.0 — file-browser handler (may be null when disabled)
 
   /**
    * @param {object} config loaded channel config
@@ -37,12 +38,14 @@ export class EventDispatcher {
    * @param {object|null} deps.subagentManager
    * @param {object|null} deps.chatSessionManager
    * @param {object|null} deps.ticketSessionManager
+   * @param {object|null} deps.fsBrowser
    */
-  constructor(config, { subagentManager = null, chatSessionManager = null, ticketSessionManager = null } = {}) {
+  constructor(config, { subagentManager = null, chatSessionManager = null, ticketSessionManager = null, fsBrowser = null } = {}) {
     this.#config = config;
     this.#subagentManager = subagentManager;
     this.#chatSessionManager = chatSessionManager;
     this.#ticketSessionManager = ticketSessionManager;
+    this.#fsBrowser = fsBrowser;
   }
 
   /**
@@ -58,6 +61,7 @@ export class EventDispatcher {
       case 'chat_request':
       case 'chat_room_message':
       case 'comment_mention':
+      case 'fs_request':
         recordEvent(eventType, raw);
         break;
       default:
@@ -69,7 +73,35 @@ export class EventDispatcher {
       case 'chat_request':       return this.handleChatRequest(raw);
       case 'chat_room_message':  return this.handleChatRoomMessage(raw);
       case 'comment_mention':    return this.handleCommentMention(raw);
+      case 'fs_request':         return this.handleFsRequest(raw);
     }
+  }
+
+  async handleFsRequest(raw) {
+    let ev;
+    try { ev = JSON.parse(raw); } catch (err) {
+      log(`Failed to parse fs_request: ${err.message}`);
+      return;
+    }
+    const requestId = ev.request_id;
+    if (!requestId) { log('fs_request missing request_id — dropped'); return; }
+
+    // Capacity gate: if fs browsing isn't wired, still answer so the web UI
+    // gets a meaningful 403 instead of a 504 timeout.
+    if (!this.#fsBrowser) {
+      await postFsResponse(this.#config, requestId, {
+        ok: false,
+        error: 'fs_browser is not wired on this plugin instance',
+        code: 'FS_BROWSER_DISABLED',
+      });
+      return;
+    }
+
+    const result = await this.#fsBrowser.handle({
+      op: ev.op, path: ev.path, offset: ev.offset, limit: ev.limit,
+    });
+    await postFsResponse(this.#config, requestId, result);
+    log(`fs_request ${ev.op} ${ev.path} → ${result.ok ? 'ok' : `err:${result.code || 'FS_ERROR'}`}`);
   }
 
   async handleTrigger(raw) {

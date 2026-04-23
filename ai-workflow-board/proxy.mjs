@@ -41,6 +41,7 @@ import { TicketSessionManager } from './lib/ticket-session-manager.mjs';
 import { uploadIfNewErrors } from './lib/error-log-uploader.mjs';
 import { onFlushThreshold } from './lib/event-log-recorder.mjs';
 import { cleanupOrphanSubagents } from './lib/orphan-cleanup.mjs';
+import { FsBrowser } from './lib/fs-browser.mjs';
 
 // ─── MCP Proxy ────────────────────────────────────────────
 //
@@ -139,6 +140,11 @@ function runProxy(rl, config) {
   // v0.8.0: persistent per-ticket sessions (trigger + board_update routed to same subagent).
   const ticketSessionManager = new TicketSessionManager(config);
 
+  // v0.31.0: file-browser handler. Off unless config.fs_browser.enabled=true
+  // AND config.fs_browser.roots has at least one resolvable path. See
+  // lib/fs-browser.mjs for scope enforcement details.
+  const fsBrowser = new FsBrowser(config, config.fs_browser || {});
+
   // Phase 4 D-69: completion notification. Fires for every subagent exit
   // (normal completion, non-zero failure, or TTL SIGTERM/SIGKILL timeout).
   // SubagentManager invokes this inside its exit handler — see Plan 04-02 #wireExitHandler.
@@ -205,7 +211,7 @@ function runProxy(rl, config) {
     // Start SSE stream AFTER handshake completes (Claude is ready to receive)
     if (msg.method === 'notifications/initialized') {
       if (!eventStream) {
-        eventStream = new EventStream(config, subagentManager, chatSessionManager, ticketSessionManager);
+        eventStream = new EventStream(config, subagentManager, chatSessionManager, ticketSessionManager, fsBrowser);
         eventStream.start();
         // Wait for agent_id resolution, then start heartbeat
         agentIdReady.then((agentId) => {

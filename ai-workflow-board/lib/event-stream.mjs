@@ -29,16 +29,17 @@ export class EventStream {
   #dispatcher;
 
   /**
-   * Back-compat constructor — accepts the legacy 4-arg form so proxy.mjs and
+   * Back-compat constructor — accepts the legacy 5-arg form so proxy.mjs and
    * existing tests keep working without modification. Internally builds an
-   * EventDispatcher from the three managers.
+   * EventDispatcher from the injected managers.
    */
-  constructor(config, subagentManager = null, chatSessionManager = null, ticketSessionManager = null) {
+  constructor(config, subagentManager = null, chatSessionManager = null, ticketSessionManager = null, fsBrowser = null) {
     this.#url = `${config.url.replace(/\/$/, '')}/api/events/stream?token=${encodeURIComponent(config.apiKey)}`;
     this.#dispatcher = new EventDispatcher(config, {
       subagentManager,
       chatSessionManager,
       ticketSessionManager,
+      fsBrowser,
     });
   }
 

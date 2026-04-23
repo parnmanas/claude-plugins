@@ -61,3 +61,30 @@ export async function fetchChatRoomHistory(config, roomId, limit = 20) {
     return [];
   }
 }
+
+/**
+ * POST the plugin's response for a given fs_request back to AWB. Fire-and-log
+ * on failure — the server will timeout the pending request and surface a
+ * 504 to the web UI, which is already the honest outcome if delivery fails.
+ */
+export async function postFsResponse(config, requestId, body) {
+  if (!requestId) return;
+  try {
+    const url = `${config.url.replace(/\/$/, '')}/api/fs/responses/${encodeURIComponent(requestId)}`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-Agent-Key': config.apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      log(`fs response POST failed: ${resp.status} ${resp.statusText} (request=${requestId})`);
+    }
+  } catch (err) {
+    log(`fs response POST error: ${err.message} (request=${requestId})`);
+  }
+}
