@@ -48,6 +48,10 @@ export class BaseSessionManager {
    * @param {string} options.cfgPrefix  mcp-config tempfile prefix ('cfg-chat-' | 'cfg-ticket-')
    * @param {string} options.kindLabel  spawn-log kind value ('chat_session' | 'ticket_session')
    */
+  // v0.32: monitor injected post-construction so the proxy can wire it after
+  // resolving the agent's workspace_id. No-op tap until set.
+  #monitor = null;
+
   constructor(config, options) {
     this.#config = config;
     this.#keyField = options.keyField;
@@ -55,6 +59,8 @@ export class BaseSessionManager {
     this.#cfgPrefix = options.cfgPrefix;
     this.#kindLabel = options.kindLabel;
   }
+
+  setMonitor(monitor) { this.#monitor = monitor; }
 
   // ─── Read-only accessors for subclasses ────────────────────────
   get _config() { return this.#config; }
@@ -128,6 +134,10 @@ export class BaseSessionManager {
       const child = spawn(resolvedBin, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: true,
+        // v0.32: Windows console-window spam fix — without this, every spawned
+        // claude.exe (and each Bash subprocess it launches) flashes a console
+        // window even though stdio is already piped to the proxy.
+        windowsHide: true,
         env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
         // Only .cmd/.bat/.ps1 wrappers need cmd.exe; native .exe spawns direct.
         shell: /\.(cmd|bat|ps1)$/i.test(resolvedBin),
@@ -161,6 +171,14 @@ export class BaseSessionManager {
         lastTouchedAt: Date.now(),
         idleTimer: null,
       };
+      // v0.32: register with the subagent monitor (no-op when monitor unset
+      // or disabled). Tap stays on the session record so wireStdio/writeTurn/
+      // wireExit can route lines through it.
+      sess.tap = this.#monitor?.register({
+        kind: this.#kindLabel === 'chat_session' ? 'chat' : (this.#kindLabel === 'ticket_session' ? 'ticket' : 'oneshot'),
+        sessionKey,
+        pid: child.pid,
+      }) || null;
       this.#wireStdio(sess);
       this.#wireExit(sess);
 
@@ -271,8 +289,10 @@ export class BaseSessionManager {
       type: 'user',
       message: { role: 'user', content: [{ type: 'text', text: String(text) }] },
     };
+    const wire = JSON.stringify(obj);
     try {
-      sess.child.stdin.write(JSON.stringify(obj) + '\n');
+      sess.child.stdin.write(wire + '\n');
+      sess.tap?.inLine(wire);
       log(`${this.#logTag} dispatched turn ${this.#keyField}=${sess[this.#keyField]} pid=${sess.pid} turn=${sess.turnCount + 1} bytes=${Buffer.byteLength(text)}`);
     } catch (err) {
       log(`${this.#logTag} stdin write failed pid=${sess.pid}: ${err.message}`);
@@ -286,6 +306,7 @@ export class BaseSessionManager {
       rlOut.on('line', (line) => {
         // stream-json: one JSON object per line. First line of a turn drives
         // the 'thinking' progress fire; first assistant line drives 'composing'.
+        sess.tap?.outLine(line);
         let obj = null;
         try { obj = JSON.parse(line); } catch { /* non-JSON; skip */ }
         this.#advanceTurn(sess, obj);
@@ -307,6 +328,7 @@ export class BaseSessionManager {
       this.#endTurn(sess);
       const durationSec = Math.round((Date.now() - sess.startedAt) / 1000);
       const key = sess[this.#keyField];
+      sess.tap?.end({ exit_code: code, signal });
       log(`${this.#logTag} exit pid=${sess.pid} ${this.#keyField}=${key} code=${code} signal=${signal || '-'} turns=${sess.turnCount} duration=${durationSec}s`);
       if (this.#sessions.get(key) === sess) this.#sessions.delete(key);
       if (sess.configPath) {

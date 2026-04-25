@@ -40,12 +40,15 @@ export class SubagentManager {
   #persistPath;
   #pidDir;
   #initialized = false;
+  #monitor = null;               // v0.32: injected by proxy.mjs after agent_id resolution
 
   constructor(config) {
     this.#config = config;
     this.#persistPath = SUBAGENTS_PERSIST_PATH;
     this.#pidDir = SUBAGENTS_BASE_DIR;
   }
+
+  setMonitor(monitor) { this.#monitor = monitor; }
 
   /** Idempotent init: create dirs, reconcile persisted records, start TTL sweep. */
   async init() {
@@ -230,6 +233,9 @@ export class SubagentManager {
       const child = spawn(resolvedBin, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
+        // v0.32: hide console windows on Windows; without this every
+        // claude.exe + its Bash subprocesses flash a console.
+        windowsHide: true,
         env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
         // Only .cmd/.bat/.ps1 wrappers need cmd.exe (shell:true). Native .exe
         // files spawn directly, avoiding Windows arg-escaping surprises from
@@ -265,6 +271,15 @@ export class SubagentManager {
         config_path: configPath,
         process_handle: child,
       };
+      // v0.32 monitor tap (no-op when monitor unset). One-shots use 'oneshot'
+      // kind; session_key encodes the dispatch identity for the UI.
+      record.tap = this.#monitor?.register({
+        kind: 'oneshot',
+        sessionKey: spec.triggerId
+          ? `oneshot:trigger:${spec.triggerId}`
+          : (spec.chatRequestId ? `oneshot:chat:${spec.chatRequestId}` : `oneshot:${pid}`),
+        pid,
+      }) || null;
       this.#map.delete(reservationId);
       this.#map.set(pid, record);
       this.#persist();
@@ -294,8 +309,7 @@ export class SubagentManager {
       try {
         await fsp.unlink(record.config_path);
       } catch { /* best-effort */ }
-      // Plan 04-03 wraps sendChannelEvent() here to notify the main session.
-      // Plan 04-02 leaves a log line only; consumers are not yet wired.
+      record.tap?.end({ exit_code: code, signal });
       log(`Subagent exit: pid=${pid} kind=${record.kind} code=${code} signal=${signal || '-'} duration=${durationSec}s`);
       // Expose hook for Plan 04-03 test spy — stored on the instance for test visibility
       if (typeof this.onExit === 'function') {
@@ -310,7 +324,11 @@ export class SubagentManager {
   #wireStdioCapture(child, pid) {
     if (child.stdout) {
       const rlOut = createInterface({ input: child.stdout });
-      rlOut.on('line', (line) => log(`[subagent:${pid}] ${line}`));
+      rlOut.on('line', (line) => {
+        const record = this.#map.get(pid);
+        record?.tap?.outLine(line);
+        log(`[subagent:${pid}] ${line}`);
+      });
     }
     if (child.stderr) {
       const rlErr = createInterface({ input: child.stderr });

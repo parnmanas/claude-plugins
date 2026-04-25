@@ -42,6 +42,7 @@ import { uploadIfNewErrors } from './lib/error-log-uploader.mjs';
 import { onFlushThreshold } from './lib/event-log-recorder.mjs';
 import { cleanupOrphanSubagents } from './lib/orphan-cleanup.mjs';
 import { FsBrowser } from './lib/fs-browser.mjs';
+import { SubagentMonitor } from './lib/subagent-monitor.mjs';
 
 // ─── MCP Proxy ────────────────────────────────────────────
 //
@@ -144,6 +145,15 @@ function runProxy(rl, config) {
   // AND config.fs_browser.roots has at least one resolvable path. See
   // lib/fs-browser.mjs for scope enforcement details.
   const fsBrowser = new FsBrowser(config, config.fs_browser || {});
+
+  // v0.32: subagent-monitor — mirrors every spawned subagent's stream-json to
+  // the AWB server so the web UI can render a live transcript across every
+  // agent machine. workspace_id is null at construction; the server falls
+  // back to the API key's bound workspace on register POST.
+  const subagentMonitor = new SubagentMonitor(config, null);
+  subagentManager.setMonitor(subagentMonitor);
+  chatSessionManager.setMonitor(subagentMonitor);
+  ticketSessionManager.setMonitor(subagentMonitor);
 
   // Phase 4 D-69: completion notification. Fires for every subagent exit
   // (normal completion, non-zero failure, or TTL SIGTERM/SIGKILL timeout).
