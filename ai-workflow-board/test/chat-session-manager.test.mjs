@@ -19,6 +19,14 @@ writeFileSync(
   JSON.stringify({ url: 'http://localhost:7793', apiKey: 'test-key' }),
 );
 
+// v0.33: agent.json must exist for the EventDispatcher's self-skip check.
+// Tests below assume `SELF_AGENT_ID` is the local agent.
+const SELF_AGENT_ID = 'self-agent-uuid';
+writeFileSync(
+  join(TMP_BASE, 'channels', 'awb', 'agent.json'),
+  JSON.stringify({ agent_id: SELF_AGENT_ID, name: 'Self' }),
+);
+
 const { ChatSessionManager, EventStream, DELEGATION_DEFAULTS } = await import('../proxy.mjs');
 
 function makeConfig(overrides = {}) {
@@ -198,6 +206,102 @@ test('EventStream wires chat_room_message into ChatSessionManager (one spawn, tw
   const snap = mgr._snapshot();
   assert.equal(snap.length, 1);
   assert.equal(snap[0].turnCount, 2, 'second message reused the live session');
+
+  await mgr.stop();
+  await sleep(200);
+});
+
+// ─── v0.33: agent-to-agent delivery + loop guard ──────────────────────────
+
+// Helpers shared by the three agent-sender tests below. All three exercise
+// EventStream._testDispatchChatRoomMessage with a chat_room_message envelope
+// authored by an agent (sender_type='agent') and assert the right
+// dispatch/skip outcome from the dispatcher's two early-exit checks.
+function makeAgentRoomMessage({ roomId, senderId, senderName, ts, content, depth }) {
+  return JSON.stringify({
+    event_type: 'chat_room_message',
+    scope: { room_id: roomId },
+    payload: {
+      room_id: roomId,
+      message_id: `m-${ts}`,
+      sender_type: 'agent',
+      sender_id: senderId,
+      sender_name: senderName,
+      content,
+      created_at: ts,
+      agent_chain_depth: depth,
+    },
+    timestamp: ts,
+  });
+}
+
+test('agent-to-agent: other agent sender below depth cap → dispatches', async () => {
+  const mgr = new ChatSessionManager(makeConfig({ maxConcurrent: 3 }));
+  const stream = new EventStream(makeConfig({ maxConcurrent: 3 }), null, mgr);
+  process.env.AWB_FAKE_SLEEP = '0';
+
+  await stream._testDispatchChatRoomMessage(
+    makeAgentRoomMessage({
+      roomId: 'room-G1',
+      senderId: 'other-agent',
+      senderName: 'OtherBot',
+      ts: '2026-04-26T00:00:00Z',
+      content: 'hey from another agent',
+      depth: 1,
+    }),
+  );
+
+  const snap = mgr._snapshot();
+  assert.equal(snap.length, 1, 'a session should have been spawned for the other-agent message');
+  assert.equal(snap[0].roomId, 'room-G1');
+
+  await mgr.stop();
+  await sleep(200);
+});
+
+test('agent-to-agent: self-sender → recorded but never dispatched', async () => {
+  const mgr = new ChatSessionManager(makeConfig({ maxConcurrent: 3 }));
+  const stream = new EventStream(makeConfig({ maxConcurrent: 3 }), null, mgr);
+  process.env.AWB_FAKE_SLEEP = '0';
+
+  await stream._testDispatchChatRoomMessage(
+    makeAgentRoomMessage({
+      roomId: 'room-G2',
+      senderId: SELF_AGENT_ID,
+      senderName: 'Self',
+      ts: '2026-04-26T00:01:00Z',
+      content: 'my own message',
+      depth: 1,
+    }),
+  );
+
+  const snap = mgr._snapshot();
+  assert.equal(snap.length, 0, 'self-authored messages must not spawn a reply session');
+
+  await mgr.stop();
+  await sleep(200);
+});
+
+test('agent-to-agent: depth cap reached → skipped (loop guard)', async () => {
+  const mgr = new ChatSessionManager(makeConfig({ maxConcurrent: 3 }));
+  const stream = new EventStream(makeConfig({ maxConcurrent: 3 }), null, mgr);
+  process.env.AWB_FAKE_SLEEP = '0';
+
+  // depth = 3 hits the AGENT_CHAIN_DEPTH_CAP in event-dispatcher; further
+  // delegation is suppressed until a human turn resets the chain.
+  await stream._testDispatchChatRoomMessage(
+    makeAgentRoomMessage({
+      roomId: 'room-G3',
+      senderId: 'other-agent',
+      senderName: 'OtherBot',
+      ts: '2026-04-26T00:02:00Z',
+      content: 'one ping too many',
+      depth: 3,
+    }),
+  );
+
+  const snap = mgr._snapshot();
+  assert.equal(snap.length, 0, 'message at the chain-depth cap must be suppressed to break the loop');
 
   await mgr.stop();
   await sleep(200);

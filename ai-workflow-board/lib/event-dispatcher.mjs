@@ -25,6 +25,16 @@ import {
 } from './prompts.mjs';
 import { recordEvent } from './event-log-recorder.mjs';
 
+// Hard cap on consecutive agent-to-agent turns within a single chat room.
+// Server stamps `agent_chain_depth` on every chat_room_message it broadcasts
+// (counts trailing agent senders, including the just-saved one). When the
+// depth reaches this cap we record into history but stop delegating — the
+// chain naturally resets when a user sends the next message (depth → 0).
+// Bumping this value enables longer agent dialogues at the cost of higher
+// loop risk; 3 is empirically a good "agent answers agent's reply, then we
+// stop" middle ground.
+const AGENT_CHAIN_DEPTH_CAP = 3;
+
 export class EventDispatcher {
   #config;
   #subagentManager;          // Phase 4 Plan 04-03 — spawn target (may be null)
@@ -500,12 +510,35 @@ export class EventDispatcher {
 
     const p = ev.payload || ev;
 
-    // Skip messages sent by agents to avoid self-reply loops. Still record into
-    // the ring so subsequent dispatches see them as conversation history.
+    // Two early-exit cases for agent-sent messages — both still record into
+    // the chat ring so future dispatches see complete history:
+    //
+    //   1. Self-message: never reply to your own send. Identified by
+    //      sender_id matching the local agent identity from agent.json.
+    //   2. Loop guard: server-stamped `agent_chain_depth` (count of trailing
+    //      consecutive agent senders in the room) reached the cap. We let
+    //      the chain settle until a human message resets the counter.
+    //
+    // Pre-v0.33 this was a blanket "skip every agent-sent message" which
+    // also dropped *other* agents' messages, breaking agent-to-agent chat
+    // entirely. The two narrower checks below restore delivery while still
+    // preventing infinite loops.
     if (p.sender_type === 'agent') {
-      this.#chatSessionManager?.recordRoomMessage(p);
-      log(`Chat room message from agent (${p.sender_name || p.sender_id}) — skipping delegation`);
-      return;
+      const selfAgentId = loadAgentInfo()?.agent_id || '';
+      if (selfAgentId && p.sender_id === selfAgentId) {
+        this.#chatSessionManager?.recordRoomMessage(p);
+        log(`Chat room message from self (${p.sender_name || p.sender_id}) — skipping delegation`);
+        return;
+      }
+      const depth = typeof p.agent_chain_depth === 'number' ? p.agent_chain_depth : 0;
+      if (depth >= AGENT_CHAIN_DEPTH_CAP) {
+        this.#chatSessionManager?.recordRoomMessage(p);
+        log(
+          `Chat room message from agent (${p.sender_name || p.sender_id}) — agent_chain_depth=${depth} ` +
+            `>= cap ${AGENT_CHAIN_DEPTH_CAP}, skipping delegation to break loop`,
+        );
+        return;
+      }
     }
 
     // Three-stage typing contract:
