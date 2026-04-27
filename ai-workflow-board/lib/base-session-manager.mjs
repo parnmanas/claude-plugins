@@ -101,12 +101,20 @@ export class BaseSessionManager {
         `${this.#cfgPrefix}${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
       );
       await fsp.mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
+      // X-AWB-Client-Type: subagent bypasses the server's proxy schemaVersion
+      // gate (mcp.controller.ts) — same as SubagentManager. Persistent ticket /
+      // chat sessions spawn the Claude CLI directly (no proxy.mjs in the path),
+      // so without this header the server rejects initialize with -32000
+      // "proxy schemaVersion mismatch" and no mcp__awb__* tools register.
       const mcpConfig = {
         mcpServers: {
           awb: {
             type: 'http',
             url: `${this.#config.url.replace(/\/$/, '')}/mcp`,
-            headers: { Authorization: `Bearer ${this.#config.apiKey}` },
+            headers: {
+              Authorization: `Bearer ${this.#config.apiKey}`,
+              'X-AWB-Client-Type': 'subagent',
+            },
           },
         },
       };
