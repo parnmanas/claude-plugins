@@ -9,6 +9,13 @@
 // and POSTs them to /api/agent-subagents/:id/lines so we don't hammer the
 // server with one POST per token. Failures are logged but never thrown — a
 // degraded monitor must NEVER block the actual subagent traffic.
+//
+// v0.35: server-side records are persistent (DB-backed). The monitor also
+// posts a periodic reconcile listing the subagent_ids it currently has alive
+// so the server can mark any previously-registered subagent NOT in the list
+// as ended (signal='disappeared') and start its 48h retention countdown.
+// This is the only path that cleans up records left behind by proxy crashes
+// or lost taps on restart — without it, those rows would sit live forever.
 
 import { randomUUID } from 'crypto';
 import { REQUEST_TIMEOUT_MS } from './constants.mjs';
@@ -16,11 +23,22 @@ import { log } from './logging.mjs';
 
 const FLUSH_INTERVAL_MS = 200;
 const FLUSH_LINE_THRESHOLD = 50;
+// 5 min cadence matches the server-side sweep tick. We don't need anything
+// faster — the worst case is 5 min of "live" UI before a crashed-out subagent
+// shows ended, after which the server-side 48h retention starts.
+const RECONCILE_INTERVAL_MS = 5 * 60_000;
+const RECONCILE_INITIAL_DELAY_MS = 5_000;
 
 export class SubagentMonitor {
   #config;
   #workspaceId;
   #enabled;
+  // Set of subagent_ids the monitor currently believes alive — added on
+  // register, removed on tap.end(). Reported via reportLiveList so the server
+  // can mark any subagent NOT in this set as ended.
+  #liveIds = new Set();
+  #reconcileTimer = null;
+  #reconcileInitialTimer = null;
 
   /**
    * @param {object} config loaded plugin config
@@ -35,6 +53,7 @@ export class SubagentMonitor {
     this.#enabled = this.#config?.subagent_monitor?.enabled !== false;
     if (this.#enabled) {
       log(`[subagent-monitor] enabled (workspace=${this.#workspaceId ? this.#workspaceId.slice(0, 8) + '...' : 'auto-bind via api key'})`);
+      this.#startReconcileLoop();
     } else {
       log('[subagent-monitor] disabled (config.subagent_monitor.enabled=false)');
     }
@@ -49,6 +68,7 @@ export class SubagentMonitor {
     if (!this.#enabled) return makeNoopTap();
     const subagentId = randomUUID();
     const startedAt = new Date().toISOString();
+    this.#liveIds.add(subagentId);
 
     // Fire register POST in background — even if it fails, we still buffer
     // and try to flush; server simply ignores unknown ids.
@@ -76,7 +96,35 @@ export class SubagentMonitor {
 
   async _end(subagentId, info) {
     if (!this.#enabled) return;
+    this.#liveIds.delete(subagentId);
     await this.#post(`/api/agent-subagents/${encodeURIComponent(subagentId)}/end`, info || {});
+  }
+
+  /**
+   * Stop the reconcile loop. Called on proxy shutdown so the timer doesn't
+   * keep the event loop alive past stop().
+   */
+  stop() {
+    if (this.#reconcileTimer) { clearInterval(this.#reconcileTimer); this.#reconcileTimer = null; }
+    if (this.#reconcileInitialTimer) { clearTimeout(this.#reconcileInitialTimer); this.#reconcileInitialTimer = null; }
+  }
+
+  #startReconcileLoop() {
+    // Fire once shortly after startup so the first reconcile lands once any
+    // initial registrations have settled. Then on a 5-minute interval.
+    this.#reconcileInitialTimer = setTimeout(() => {
+      this.#reportLiveList().catch((err) => log(`[subagent-monitor] initial reconcile failed: ${err.message}`));
+    }, RECONCILE_INITIAL_DELAY_MS);
+    this.#reconcileInitialTimer.unref?.();
+    this.#reconcileTimer = setInterval(() => {
+      this.#reportLiveList().catch((err) => log(`[subagent-monitor] reconcile failed: ${err.message}`));
+    }, RECONCILE_INTERVAL_MS);
+    this.#reconcileTimer.unref?.();
+  }
+
+  async #reportLiveList() {
+    const ids = Array.from(this.#liveIds);
+    await this.#post('/api/agent-subagents/reconcile', { live_subagent_ids: ids });
   }
 
   async #post(path, body) {
@@ -110,6 +158,9 @@ class SubagentTap {
     this.#subagentId = subagentId;
     this.startedAt = startedAt;
   }
+
+  /** Subagent UUID assigned on register. Read-only. */
+  get subagentId() { return this.#subagentId; }
 
   inLine(line) { this.#append('in', line); }
   outLine(line) { this.#append('out', line); }
@@ -147,6 +198,7 @@ function makeNoopTap() {
     inLine() {},
     outLine() {},
     async end() {},
+    get subagentId() { return null; },
     startedAt: new Date().toISOString(),
   };
 }
