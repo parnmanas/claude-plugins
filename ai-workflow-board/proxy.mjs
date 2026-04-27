@@ -191,6 +191,7 @@ function runProxy(rl, config) {
     try { await subagentManager.stop(); } catch (err) { log(`shutdown: ${err.message}`); }
     try { await chatSessionManager.stop(); } catch (err) { log(`shutdown (chat): ${err.message}`); }
     try { await ticketSessionManager.stop(); } catch (err) { log(`shutdown (ticket): ${err.message}`); }
+    try { subagentMonitor.stop(); } catch (err) { log(`shutdown (monitor): ${err.message}`); }
     process.exit(0);
   };
   process.once('SIGTERM', () => shutdownHandler('SIGTERM'));

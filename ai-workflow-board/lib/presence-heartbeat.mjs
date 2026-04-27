@@ -4,20 +4,22 @@ import { HEARTBEAT_INTERVAL_MS, REQUEST_TIMEOUT_MS } from './constants.mjs';
 import { log } from './logging.mjs';
 
 /**
- * Periodically call the `ping` MCP tool against AWB so this agent stays
- * marked online in the dashboard. Without this, nothing on the Claude side
- * ever touches `last_seen_at`, and the server's 90-second sweep would
- * immediately mark us offline.
+ * Periodically stamp `last_seen_at` on the AWB Agent row so the dashboard
+ * keeps this agent marked online. The server's 90-second sweep flips
+ * is_online=0 the moment a heartbeat lapses past that window, so we tick
+ * every HEARTBEAT_INTERVAL_MS (30s by default).
  *
- * Mechanism: open a short-lived MCP session (initialize → tools/call ping)
- * every HEARTBEAT_INTERVAL_MS. The session is torn down after each ping —
- * this is cheaper than keeping a persistent session alive across the whole
- * proxy lifetime and avoids Mcp-Session-Id contention with the Claude CLI's
- * own session (which flows through stdio on this same proxy).
+ * v0.35.1: switched from MCP `ping` tool to a single REST POST. The MCP
+ * variant required a 4-step session dance (initialize → notifications/
+ * initialized → tools/call → DELETE) per heartbeat — every proxy did this
+ * every 30s, and at scale (multiple proxies per agent, many agents) it
+ * dominated MCP session churn (one create + one close per tick) and
+ * flooded the server log. POST /api/agent/ping is the same DB update with
+ * a single round-trip.
  *
  * Fires once immediately on start() so the dashboard reflects online
- * status within the first second of the proxy's lifetime instead of waiting
- * 30s for the first tick.
+ * status within the first second of the proxy's lifetime instead of
+ * waiting 30s for the first tick.
  */
 export class PresenceHeartbeat {
   #config;
@@ -55,10 +57,9 @@ export class PresenceHeartbeat {
 
   /**
    * Force an immediate ping outside the 30s tick. Called on SSE reconnect and
-   * forward-session re-init so the dashboard recovers ONLINE within ~30s of a
-   * server restart instead of waiting up to one full heartbeat interval. Each
-   * call is independent (throwaway session per ping), so concurrent invocations
-   * are safe — no deduping needed.
+   * forward-session re-init so the dashboard recovers ONLINE within seconds of
+   * a server restart instead of waiting up to one full heartbeat interval.
+   * Concurrent invocations are safe — each is an independent stateless POST.
    */
   async pingNow() {
     if (this.#stopped || !this.#agentId) return;
@@ -71,72 +72,19 @@ export class PresenceHeartbeat {
 
   async #ping() {
     if (this.#stopped) return;
-    const base = this.#config.url.replace(/\/$/, '');
-    const url = `${base}/mcp`;
-    const headers = {
-      Authorization: `Bearer ${this.#config.apiKey}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream',
-    };
-
-    // Step 1: initialize to get Mcp-Session-Id
-    const initResp = await fetch(url, {
+    const url = `${this.#config.url.replace(/\/$/, '')}/api/agent/ping`;
+    const resp = await fetch(url, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-03-26',
-          capabilities: { experimental: { 'awb/schemaVersion': { version: 2 } } },
-          clientInfo: { name: 'awb-presence-heartbeat', version: '1.0.0' },
-        },
-      }),
+      headers: {
+        'X-Agent-Key': this.#config.apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ agent_id: this.#agentId }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!initResp.ok) {
-      throw new Error(`initialize HTTP ${initResp.status}`);
+    if (!resp.ok) {
+      throw new Error(`POST /api/agent/ping HTTP ${resp.status}`);
     }
-    const sid = initResp.headers.get('mcp-session-id');
-    if (!sid) throw new Error('initialize did not return Mcp-Session-Id');
-    // Drain response body so the connection releases
-    await initResp.text().catch(() => null);
-
-    const sessionHeaders = { ...headers, 'Mcp-Session-Id': sid };
-
-    // Step 2: notifications/initialized (required by MCP spec before tool calls)
-    await fetch(url, {
-      method: 'POST',
-      headers: sessionHeaders,
-      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    }).then((r) => r.text().catch(() => null));
-
-    // Step 3: tools/call ping
-    const pingResp = await fetch(url, {
-      method: 'POST',
-      headers: sessionHeaders,
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: {
-          name: 'ping',
-          arguments: { agent_id: this.#agentId },
-        },
-      }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!pingResp.ok) {
-      throw new Error(`tools/call ping HTTP ${pingResp.status}`);
-    }
-    await pingResp.text().catch(() => null);
-    log(`Presence ping ok (agent=${this.#agentId.slice(0, 8)})`);
-
-    // Step 4: DELETE session to free server-side state
-    fetch(url, { method: 'DELETE', headers: sessionHeaders, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
-      .then((r) => r.text().catch(() => null))
-      .catch(() => { /* ignore — server handles expired sessions via TTL */ });
+    await resp.text().catch(() => null);
   }
 }
