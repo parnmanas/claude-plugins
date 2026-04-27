@@ -105,7 +105,17 @@ export class TicketSessionManager extends BaseSessionManager {
       spec.ticketId, spec.columnPrompt || null,
       spec.extraInstructions || null,
     );
-    const spawned = await this._spawnSession(sessionKey, spec.rolePrompt || '', firstTurnText);
+    // monitorMeta drives both the per-spawn MCP config headers
+    // (X-AWB-Subagent-Role / X-AWB-Subagent-Ticket-Id) and the subagent
+    // monitor register payload, so the server side can attribute comments
+    // and dashboard rows to the correct role without each MCP tool call
+    // carrying it explicitly.
+    const monitorMeta = {
+      ticket_id: spec.ticketId,
+      ticket_title: spec.ticket?.title || '',
+      role,
+    };
+    const spawned = await this._spawnSession(sessionKey, spec.rolePrompt || '', firstTurnText, { monitorMeta });
     if (!spawned) {
       if (dedupKey) this._forgetDedup(dedupKey);
       return { dispatched: false, reason: 'spawn_failed' };
@@ -122,6 +132,7 @@ export class TicketSessionManager extends BaseSessionManager {
       fireAndForgetTool(this._config, 'set_current_task', {
         agent_id: spawned.agentId,
         ticket_id: spec.ticketId,
+        role,
       });
     }
 

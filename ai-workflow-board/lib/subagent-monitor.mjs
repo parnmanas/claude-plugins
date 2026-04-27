@@ -45,7 +45,7 @@ export class SubagentMonitor {
    * are no-ops when the monitor is disabled, so callers don't need to
    * branch on `enabled` at every callsite.
    */
-  register({ kind, sessionKey, pid, label }) {
+  register({ kind, sessionKey, pid, label, ticketId, ticketTitle, role }) {
     if (!this.#enabled) return makeNoopTap();
     const subagentId = randomUUID();
     const startedAt = new Date().toISOString();
@@ -61,6 +61,9 @@ export class SubagentMonitor {
       label,
     };
     if (this.#workspaceId) body.workspace_id = this.#workspaceId;
+    if (ticketId) body.ticket_id = ticketId;
+    if (ticketTitle) body.ticket_title = ticketTitle;
+    if (role) body.role = role;
     this.#post('/api/agent-subagents', body).catch(() => {});
 
     return new SubagentTap(this, subagentId, startedAt);

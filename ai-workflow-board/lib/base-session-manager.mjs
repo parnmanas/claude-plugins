@@ -93,7 +93,7 @@ export class BaseSessionManager {
    * It is also re-invoked every 10s with the latest stage so callers can
    * refresh client-side typing indicators that auto-expire.
    */
-  async _spawnSession(sessionKey, rolePrompt, firstTurnText, { onProgress } = {}) {
+  async _spawnSession(sessionKey, rolePrompt, firstTurnText, { onProgress, monitorMeta } = {}) {
     let configPath = null;
     try {
       configPath = join(
@@ -106,15 +106,25 @@ export class BaseSessionManager {
       // chat sessions spawn the Claude CLI directly (no proxy.mjs in the path),
       // so without this header the server rejects initialize with -32000
       // "proxy schemaVersion mismatch" and no mcp__awb__* tools register.
+      //
+      // X-AWB-Subagent-Role / X-AWB-Subagent-Ticket-Id pin the role context
+      // for ticket-session subagents so the server can attribute comments,
+      // current_task, etc. to the correct role without each tool call having
+      // to carry the role explicitly. Set only when the subclass supplies
+      // monitorMeta with role/ticketId — chat sessions and oneshots leave the
+      // headers off, and the server treats their absence as "no pinned role".
+      const headers = {
+        Authorization: `Bearer ${this.#config.apiKey}`,
+        'X-AWB-Client-Type': 'subagent',
+      };
+      if (monitorMeta?.ticket_id) headers['X-AWB-Subagent-Ticket-Id'] = monitorMeta.ticket_id;
+      if (monitorMeta?.role) headers['X-AWB-Subagent-Role'] = monitorMeta.role;
       const mcpConfig = {
         mcpServers: {
           awb: {
             type: 'http',
             url: `${this.#config.url.replace(/\/$/, '')}/mcp`,
-            headers: {
-              Authorization: `Bearer ${this.#config.apiKey}`,
-              'X-AWB-Client-Type': 'subagent',
-            },
+            headers,
           },
         },
       };
@@ -182,10 +192,16 @@ export class BaseSessionManager {
       // v0.32: register with the subagent monitor (no-op when monitor unset
       // or disabled). Tap stays on the session record so wireStdio/writeTurn/
       // wireExit can route lines through it.
+      // monitorMeta carries ticket+role for ticket-session subagents so the
+      // server-side dashboard can render "Ticket title · reviewer" instead
+      // of an opaque session key. chat/oneshot subclasses pass nothing.
       sess.tap = this.#monitor?.register({
         kind: this.#kindLabel === 'chat_session' ? 'chat' : (this.#kindLabel === 'ticket_session' ? 'ticket' : 'oneshot'),
         sessionKey,
         pid: child.pid,
+        ticketId: monitorMeta?.ticket_id,
+        ticketTitle: monitorMeta?.ticket_title,
+        role: monitorMeta?.role,
       }) || null;
       this.#wireStdio(sess);
       this.#wireExit(sess);
