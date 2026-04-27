@@ -55,6 +55,21 @@ export class PresenceHeartbeat {
     }
   }
 
+  /**
+   * Force an immediate ping outside the 30s tick. Called on SSE reconnect and
+   * forward-session re-init so the dashboard recovers ONLINE within seconds of
+   * a server restart instead of waiting up to one full heartbeat interval.
+   * Concurrent invocations are safe — each is an independent stateless POST.
+   */
+  async pingNow() {
+    if (this.#stopped || !this.#agentId) return;
+    try {
+      await this.#ping();
+    } catch (err) {
+      log(`Presence ping (forced) failed: ${err.message}`);
+    }
+  }
+
   async #ping() {
     if (this.#stopped) return;
     const url = `${this.#config.url.replace(/\/$/, '')}/api/agent/ping`;
