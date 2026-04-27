@@ -51,10 +51,17 @@ export class McpForwardSession {
   #cachedInitMsg = null;
   #keepaliveTimer = null;
   #stopped = false;
+  #onReinit;
 
-  constructor(mcpUrl, apiKey) {
+  /**
+   * `onReinit` (3rd positional, optional) fires after a successful silent
+   * re-initialize. Used by proxy.mjs to kick an immediate presence ping so
+   * the dashboard recovers ONLINE within seconds of a server restart.
+   */
+  constructor(mcpUrl, apiKey, onReinit = null) {
     this.#mcpUrl = mcpUrl;
     this.#apiKey = apiKey;
+    this.#onReinit = onReinit;
   }
 
   get sessionId() { return this.#sessionId; }
@@ -225,6 +232,10 @@ export class McpForwardSession {
         await resp.text().catch(() => null);
         this.#sessionId = sid;
         log(`Forward session re-initialized (sid=${sid.slice(0, 8)})`);
+        // Kick an immediate presence ping — re-init means the server just
+        // came back, so don't wait up to 30s for the next heartbeat tick to
+        // recover dashboard ONLINE. Errors swallowed.
+        try { this.#onReinit?.(); } catch { /* hook errors must not break re-init */ }
       } finally {
         this.#initPromise = null;
       }

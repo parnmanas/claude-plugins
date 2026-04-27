@@ -104,8 +104,6 @@ function runUnconfigured(rl) {
 /** Main proxy — bridges stdio MCP to remote AWB server + SSE channel */
 function runProxy(rl, config) {
   const mcpUrl = config.url.replace(/\/$/, '') + '/mcp';
-  const forwardSession = new McpForwardSession(mcpUrl, config.apiKey);
-  let eventStream = null;
 
   // Phase 3 D-52: presence heartbeat. Resolves agent_id from agent.json (or via MCP whoami
   // if null), then pings every 30s so the dashboard keeps this agent marked online.
@@ -113,6 +111,17 @@ function runProxy(rl, config) {
   let resolvedAgentId = null;
   const agentIdReady = resolveAgentId(config).then((id) => { resolvedAgentId = id; return id; });
   const presenceHeartbeat = { _real: null };
+  // Shared "server-just-came-back" hook fired by SSE reconnect and forward-session
+  // re-init. Kicks an out-of-band ping so the dashboard recovers ONLINE within
+  // seconds of a server restart instead of waiting for the next 30s heartbeat
+  // tick (and risking the 90s server-side sweep marking us offline first).
+  // No-op until PresenceHeartbeat is constructed (post-handshake) — fire-and-forget.
+  const kickPresencePing = () => {
+    presenceHeartbeat._real?.pingNow().catch(() => { /* logged inside pingNow */ });
+  };
+
+  const forwardSession = new McpForwardSession(mcpUrl, config.apiKey, kickPresencePing);
+  let eventStream = null;
   let uploadTimer = null;
 
   // Reap orphaned subagents from previous proxy runs. When the proxy dies
@@ -221,7 +230,7 @@ function runProxy(rl, config) {
     // Start SSE stream AFTER handshake completes (Claude is ready to receive)
     if (msg.method === 'notifications/initialized') {
       if (!eventStream) {
-        eventStream = new EventStream(config, subagentManager, chatSessionManager, ticketSessionManager, fsBrowser);
+        eventStream = new EventStream(config, subagentManager, chatSessionManager, ticketSessionManager, fsBrowser, kickPresencePing);
         eventStream.start();
         // Wait for agent_id resolution, then start heartbeat
         agentIdReady.then((agentId) => {

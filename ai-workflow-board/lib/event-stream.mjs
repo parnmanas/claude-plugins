@@ -27,13 +27,19 @@ export class EventStream {
   #abortController = null;
   #stopped = false;
   #dispatcher;
+  #onConnect;
 
   /**
    * Back-compat constructor — accepts the legacy 5-arg form so proxy.mjs and
    * existing tests keep working without modification. Internally builds an
    * EventDispatcher from the injected managers.
+   *
+   * `onConnect` (6th positional, optional) fires after every successful SSE
+   * connect — both initial and reconnect. Used by proxy.mjs to kick an
+   * immediate presence ping so the dashboard recovers ONLINE within seconds
+   * of a server restart instead of waiting up to a full heartbeat interval.
    */
-  constructor(config, subagentManager = null, chatSessionManager = null, ticketSessionManager = null, fsBrowser = null) {
+  constructor(config, subagentManager = null, chatSessionManager = null, ticketSessionManager = null, fsBrowser = null, onConnect = null) {
     this.#url = `${config.url.replace(/\/$/, '')}/api/events/stream?token=${encodeURIComponent(config.apiKey)}`;
     this.#dispatcher = new EventDispatcher(config, {
       subagentManager,
@@ -41,6 +47,7 @@ export class EventStream {
       ticketSessionManager,
       fsBrowser,
     });
+    this.#onConnect = onConnect;
   }
 
   start() {
@@ -71,6 +78,10 @@ export class EventStream {
 
       log('SSE connected');
       this.#retryDelay = RECONNECT_INITIAL_MS;
+      // Kick an immediate presence ping so dashboard ONLINE recovers fast
+      // after a server restart (the SSE reconnect is our earliest signal that
+      // the server is back). Errors swallowed inside the callback.
+      try { this.#onConnect?.(); } catch { /* hook errors must not block stream read */ }
       await this.#readStream(resp.body);
 
       // Stream ended cleanly — reconnect
