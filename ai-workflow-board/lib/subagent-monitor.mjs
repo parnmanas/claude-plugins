@@ -90,14 +90,14 @@ export class SubagentMonitor {
   }
 
   async _flushLines(subagentId, lines) {
-    if (!this.#enabled || !lines.length) return;
-    await this.#post(`/api/agent-subagents/${encodeURIComponent(subagentId)}/lines`, { lines });
+    if (!this.#enabled || !lines.length) return 'ok';
+    return this.#post(`/api/agent-subagents/${encodeURIComponent(subagentId)}/lines`, { lines });
   }
 
   async _end(subagentId, info) {
-    if (!this.#enabled) return;
+    if (!this.#enabled) return 'ok';
     this.#liveIds.delete(subagentId);
-    await this.#post(`/api/agent-subagents/${encodeURIComponent(subagentId)}/end`, info || {});
+    return this.#post(`/api/agent-subagents/${encodeURIComponent(subagentId)}/end`, info || {});
   }
 
   /**
@@ -127,10 +127,16 @@ export class SubagentMonitor {
     await this.#post('/api/agent-subagents/reconcile', { live_subagent_ids: ids });
   }
 
+  /**
+   * Returns 'ok' on 2xx, 'dead' on 4xx (server doesn't recognize the
+   * subagent_id — typically server restart wiped its in-memory record),
+   * 'transient' on 5xx / network error (worth retrying). Caller (SubagentTap)
+   * uses 'dead' to stop flushing further lines for that subagent.
+   */
   async #post(path, body) {
     try {
       const url = `${this.#config.url.replace(/\/$/, '')}${path}`;
-      await fetch(url, {
+      const resp = await fetch(url, {
         method: 'POST',
         headers: {
           'X-Agent-Key': this.#config.apiKey,
@@ -139,8 +145,12 @@ export class SubagentMonitor {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
+      if (resp.status >= 400 && resp.status < 500) return 'dead';
+      if (!resp.ok) return 'transient';
+      return 'ok';
     } catch (err) {
       log(`[subagent-monitor] POST ${path} failed: ${err.message}`);
+      return 'transient';
     }
   }
 }
@@ -151,6 +161,12 @@ class SubagentTap {
   #buffer = [];
   #flushTimer = null;
   #ended = false;
+  // Set when the server replies 4xx to a flush — happens when the server
+  // doesn't recognize the subagent_id (e.g., restart wiped its registry,
+  // or reconcile already marked it disappeared). Continuing to POST is
+  // pure waste: every flush adds 4–7KB of payload to the server log for
+  // a record that won't come back. Once dead, append/flush become no-ops.
+  #dead = false;
   startedAt;
 
   constructor(monitor, subagentId, startedAt) {
@@ -166,7 +182,7 @@ class SubagentTap {
   outLine(line) { this.#append('out', line); }
 
   #append(direction, line) {
-    if (this.#ended || !line) return;
+    if (this.#ended || this.#dead || !line) return;
     this.#buffer.push({ direction, line, ts: new Date().toISOString() });
     if (this.#buffer.length >= FLUSH_LINE_THRESHOLD) {
       this.#flushNow();
@@ -177,9 +193,20 @@ class SubagentTap {
 
   #flushNow() {
     if (this.#flushTimer) { clearTimeout(this.#flushTimer); this.#flushTimer = null; }
+    if (this.#dead) { this.#buffer = []; return; }
     const batch = this.#buffer.splice(0);
     if (!batch.length) return;
-    this.#monitor._flushLines(this.#subagentId, batch).catch(() => {});
+    this.#monitor._flushLines(this.#subagentId, batch)
+      .then((result) => { if (result === 'dead') this.#markDead(); })
+      .catch(() => {});
+  }
+
+  #markDead() {
+    if (this.#dead) return;
+    this.#dead = true;
+    this.#buffer = [];
+    if (this.#flushTimer) { clearTimeout(this.#flushTimer); this.#flushTimer = null; }
+    log(`[subagent-monitor] tap ${this.#subagentId} marked dead — server doesn't recognize it, dropping further lines`);
   }
 
   async end(info) {
@@ -188,8 +215,14 @@ class SubagentTap {
     this.#flushNow();
     // Slight delay so the line POST lands before the end POST when both are
     // racing — server tolerates either order, but ordered makes UI render
-    // cleaner (no "ended" flicker before the last lines).
-    setTimeout(() => this.#monitor._end(this.#subagentId, info).catch(() => {}), 50);
+    // cleaner (no "ended" flicker before the last lines). Skip the end
+    // POST entirely when the tap is dead — the server already forgot us.
+    setTimeout(() => {
+      if (this.#dead) return;
+      this.#monitor._end(this.#subagentId, info)
+        .then((result) => { if (result === 'dead') this.#markDead(); })
+        .catch(() => {});
+    }, 50);
   }
 }
 
