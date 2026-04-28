@@ -27,12 +27,29 @@ import { SUBAGENTS_BASE_DIR, STOP_GRACE_MS } from './constants.mjs';
 import { log } from './logging.mjs';
 import { resolveClaudeBin } from './claude-bin-resolver.mjs';
 
+// Health watchdog. A session is "responding" when stream-json emits a
+// `result` line for each turn we wrote. If the LLM goes silent — Claude
+// account hit a rate-limit ceiling, network deadlock, child wedged on a
+// blocking syscall, etc. — turns stack on stdin without acks and the
+// AWB server keeps re-firing the same trigger forever.
+//
+// Two thresholds, OR'd together:
+//   - 5 turns dispatched without seeing a single `result` line back
+//   - 30 minutes elapsed since the first unresponded turn was written
+// On either, the child is SIGTERM'd (then SIGKILL'd after the same
+// grace window stop() uses) and the session removed from #sessions so
+// the next trigger that arrives spawns a fresh subagent.
+const UNHEALTHY_TURN_THRESHOLD = 5;
+const UNHEALTHY_DURATION_MS = 30 * 60 * 1000;
+const HEALTH_SWEEP_INTERVAL_MS = 60 * 1000;
+
 export class BaseSessionManager {
   #config;
   #sessions = new Map();           // sessionKey → session record
   #dedupSet = new Set();
   #dedupQueue = [];
   #DEDUP_MAX = 200;
+  #healthTimer = null;
 
   // Subclass-injected descriptors, set in constructor.
   #keyField;    // e.g. 'roomId' | 'ticketId' — field name on session records
@@ -188,6 +205,11 @@ export class BaseSessionManager {
         startedAt: Date.now(),
         lastTouchedAt: Date.now(),
         idleTimer: null,
+        // Health watchdog state. Bumped by _writeTurn, reset on each
+        // `result` line in #advanceTurn, swept by #healthSweep.
+        unrespondedTurnCount: 0,
+        unrespondedSince: null,
+        unhealthyKilled: false,
       };
       // v0.32: register with the subagent monitor (no-op when monitor unset
       // or disabled). Tap stays on the session record so wireStdio/writeTurn/
@@ -213,6 +235,7 @@ export class BaseSessionManager {
       sess.turnCount = 1;
       this._resetIdleTimer(sess);
       this.#sessions.set(sessionKey, sess);
+      this.#ensureHealthSweep();
       return sess;
     } catch (err) {
       log(`${this.#logTag} spawn error ${this.#keyField}=${sessionKey}: ${err.message}`);
@@ -298,6 +321,12 @@ export class BaseSessionManager {
       }
     }
     if (parsedLine?.type === 'result') {
+      // Health watchdog: a result line means the LLM pipeline answered the
+      // turn. Whether the result is success or error doesn't matter here —
+      // the child is alive and round-tripping. Clear the unresponded counters
+      // so the next stretch of silence is measured from now.
+      sess.unrespondedTurnCount = 0;
+      sess.unrespondedSince = null;
       // Per-session hook: subclasses use this to ack triggers ONLY when the
       // turn actually completed (so silent / errored exits remain
       // unacknowledged and the poller can retry them).
@@ -317,9 +346,22 @@ export class BaseSessionManager {
     try {
       sess.child.stdin.write(wire + '\n');
       sess.tap?.inLine(wire);
+      // Health watchdog: count turns that haven't seen a `result` line yet.
+      // The next #advanceTurn(result=...) clears both fields. If we hit the
+      // turn-count or duration threshold, #killUnhealthy() takes the session
+      // out — see UNHEALTHY_* constants at the top of the file.
+      sess.unrespondedTurnCount = (sess.unrespondedTurnCount || 0) + 1;
+      if (!sess.unrespondedSince) sess.unrespondedSince = Date.now();
       log(`${this.#logTag} dispatched turn ${this.#keyField}=${sess[this.#keyField]} pid=${sess.pid} turn=${sess.turnCount + 1} bytes=${Buffer.byteLength(text)}`);
     } catch (err) {
       log(`${this.#logTag} stdin write failed pid=${sess.pid}: ${err.message}`);
+      return;
+    }
+    if (sess.unrespondedTurnCount >= UNHEALTHY_TURN_THRESHOLD) {
+      this.#killUnhealthy(
+        sess,
+        `${sess.unrespondedTurnCount} consecutive turns without an LLM response`,
+      );
     }
   }
 
@@ -375,6 +417,56 @@ export class BaseSessionManager {
     if (typeof sess.idleTimer.unref === 'function') sess.idleTimer.unref();
   }
 
+  /**
+   * Lazily start a single sweep timer the first time any session is spawned.
+   * Idempotent. The timer scans every session for the duration-based
+   * unhealthy condition (turn-count side fires inline from _writeTurn).
+   */
+  #ensureHealthSweep() {
+    if (this.#healthTimer) return;
+    this.#healthTimer = setInterval(() => this.#healthSweep(), HEALTH_SWEEP_INTERVAL_MS);
+    if (typeof this.#healthTimer.unref === 'function') this.#healthTimer.unref();
+  }
+
+  #healthSweep() {
+    const now = Date.now();
+    for (const sess of this.#sessions.values()) {
+      if (sess.unhealthyKilled) continue;
+      if (!sess.unrespondedSince) continue;
+      const elapsed = now - sess.unrespondedSince;
+      if (elapsed >= UNHEALTHY_DURATION_MS) {
+        this.#killUnhealthy(
+          sess,
+          `${Math.round(elapsed / 60_000)}m elapsed without an LLM response`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Force-kill a session that the watchdog has declared dead in the water.
+   * Removes from #sessions immediately so the next dispatch for the same key
+   * spawns a fresh subagent instead of finding this corpse; SIGTERM with the
+   * stop-grace window, then SIGKILL. The existing #wireExit handler runs
+   * later and finishes cleanup (cfgPath/pidPath unlink, tap.end(), monitor
+   * cleanup) — its `if (this.#sessions.get(key) === sess)` guard makes the
+   * delete-from-map step a no-op the second time around. Idempotent on
+   * sess.unhealthyKilled.
+   */
+  #killUnhealthy(sess, reason) {
+    if (sess.unhealthyKilled) return;
+    sess.unhealthyKilled = true;
+    const key = sess[this.#keyField];
+    log(`${this.#logTag} UNHEALTHY ${this.#keyField}=${key} pid=${sess.pid} — ${reason}; killing for respawn`);
+    if (this.#sessions.get(key) === sess) this.#sessions.delete(key);
+    if (sess.idleTimer) { clearTimeout(sess.idleTimer); sess.idleTimer = null; }
+    try { sess.child.stdin.end(); } catch { /* already closed */ }
+    try { process.kill(sess.pid, 'SIGTERM'); } catch { /* already dead */ }
+    setTimeout(() => {
+      try { process.kill(sess.pid, 'SIGKILL'); } catch { /* gone */ }
+    }, STOP_GRACE_MS);
+  }
+
   #evictLru() {
     let oldestKey = null;
     let oldest = Infinity;
@@ -416,6 +508,7 @@ export class BaseSessionManager {
   }
 
   async stop() {
+    if (this.#healthTimer) { clearInterval(this.#healthTimer); this.#healthTimer = null; }
     const sessions = Array.from(this.#sessions.values());
     for (const sess of sessions) {
       if (sess.idleTimer) { clearTimeout(sess.idleTimer); sess.idleTimer = null; }
