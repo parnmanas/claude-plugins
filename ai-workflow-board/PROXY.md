@@ -4,6 +4,8 @@ The AWB plugin proxy (`proxy.mjs`) bridges Claude CLI to an AWB server via MCP o
 
 As of plugin version 0.5.0 (Phase 4), the proxy can optionally **delegate** trigger processing to background Claude CLI subagents instead of forwarding every trigger to the main session. This lets the main session stay unblocked while subagents work on tickets in parallel.
 
+> **Daemon mode (v0.36.0+):** the same SSE + subagent pipeline can run as a standalone process via `daemon.mjs` — no Claude CLI parent required. See "Daemon Mode" near the bottom of this doc. The proxy stays the right choice for users running an interactive Claude session who want delegation triggered by their own MCP traffic; the daemon is the right choice for headless agent boxes or for users who want subagent processing to keep working when no interactive Claude session is open.
+
 ## Architecture
 
 ```
@@ -154,6 +156,33 @@ For a TTL kill:
 **Subagent exits with code 0 but never comments on the ticket.** The subagent ran but didn't call any MCP tools. Check the `[subagent:<pid>]` log lines for the task prompt — a truncated or malformed `ticket_prompt` can produce this. Verify the agent's `role_prompt` is set in AWB (agents without a role_prompt fall back to an empty system prompt).
 
 **Completion notification never arrives.** The `SubagentManager.onExit` hook is unassigned. This is normal in test harnesses but should never happen in `runProxy()` — check that plugin version is 0.5.0+ (`cat ~/.claude/channels/awb/../.claude-plugin/plugin.json`).
+
+## Daemon Mode (v0.36.0+)
+
+`daemon.mjs` is a sibling entrypoint to `proxy.mjs` that runs the same SSE + subagent pipeline without an MCP-stdio bridge. It exists to support the multi-CLI Agent Manager work (ticket f338f6a5) — Phase 1 reuses the existing Claude CLI subagent path without changes.
+
+```bash
+node submodules/claude-plugins/ai-workflow-board/daemon.mjs
+```
+
+What's the same vs the proxy:
+- Reads the same `~/.claude/channels/awb/{config,agent}.json`.
+- Reuses `SubagentManager`, `ChatSessionManager`, `TicketSessionManager`, `EventStream`, `SubagentMonitor`, `FsBrowser`, `PresenceHeartbeat`, `cleanupOrphanSubagents`, `uploadIfNewErrors`, `onFlushThreshold`.
+- Same `~/.claude/channels/awb/proxy.log` log file (lines are pid-tagged so daemon and proxy entries are distinguishable).
+- Same on-disk subagent state (`subagents.json` + per-subagent cfg files in `~/.claude/channels/awb/subagents/`); orphan cleanup is sibling-aware so a daemon and a proxy running side-by-side won't kill each other's children.
+
+What's missing vs the proxy:
+- No MCP stdio forward — the daemon does not bridge a Claude CLI's mcp tool calls.
+- No `notifications/claude/channel` notifications back to a parent — there is no parent. Subagent completion is logged only.
+- Fallback paths in `EventDispatcher` that call `sendChannelEvent` (cap reached, delegation disabled, …) still write a JSON-RPC notification line to the daemon's stdout. Nothing consumes it; the same path is logged. For the daemon, delegation should always be enabled (the daemon is delegation).
+
+Concurrent run with `proxy.mjs`: discouraged but not forbidden. The AWB server pins agent-targeted events (`agent_trigger`, `chat_request`, `chat_room_message`, `comment_mention`, `fs_request`) to one main SSE session per agent, so most events go to one path. Broadcast events still fan out to both. A future phase will add a lockfile to make the two mutually exclusive.
+
+Phase scope (ticket f338f6a5):
+- Phase 1 (this version): daemon entrypoint with claude-CLI subagent parity.
+- Phase 2: per-CLI adapter abstraction (gemini, codex, …).
+- Phase 3: AWB server / web UI control surface for daemons.
+- Phase 4: lockfile, daemon self-update, per-agent config UI.
 
 ## Related
 
