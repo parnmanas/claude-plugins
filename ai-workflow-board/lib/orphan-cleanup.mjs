@@ -6,9 +6,24 @@
 // files + (now) pid sidecars stay on disk.
 //
 // This module scans SUBAGENTS_BASE_DIR on proxy startup, reads each
-// `.pid` sidecar, and reaps anything it finds:
-//   1. If the pid is still alive, SIGTERM (+ delayed SIGKILL backup).
-//   2. Delete both the .pid file and its matching .json cfg.
+// `.pid` sidecar, and reaps anything genuinely orphaned:
+//   1. Build a set of cfg paths that appear in the argv of ANY live
+//      process on the host (`/proc/*/cmdline`, looking for the
+//      `--mcp-config <path>` flag the children are spawned with).
+//   2. For each `.pid` sidecar:
+//        - if the cfg path is in the live-argv set → a sibling proxy
+//          still owns this subagent. Leave the files alone.
+//        - else → genuine orphan. SIGTERM the pid (+ delayed SIGKILL),
+//          unlink the .pid + .json files.
+//
+// The /proc protection is the same trick subagent-manager's
+// #sweepOrphanCfgs uses; without it, every fresh proxy startup
+// SIGTERMs the still-alive subagents owned by an older sibling proxy
+// (e.g. the user's long-running interactive Claude Code session being
+// trampled by every short-lived `claude` invocation that follows).
+// On non-Linux hosts /proc isn't available — we fall back to the
+// pre-fix behavior (kill any sidecar pid we can prove is alive),
+// which is no worse than before.
 //
 // Cross-platform detail: `process.kill(pid, 0)` is the standard
 // existence check — it throws on ESRCH (no such process) or EPERM
@@ -44,9 +59,44 @@ function isPidAlive(pid) {
   }
 }
 
-async function reapOne(dir, entry) {
+/**
+ * Scan /proc for the set of `--mcp-config <path>` argv values across all
+ * live processes. The set is the source of truth for "this cfg path is
+ * still backing a live subagent — don't reap it." Returns null on
+ * non-Linux / unreadable /proc so callers know to fall back.
+ */
+async function readLiveCfgPathsFromProc() {
+  let procEntries;
+  try {
+    procEntries = await fsp.readdir('/proc');
+  } catch {
+    return null;
+  }
+  const live = new Set();
+  for (const entry of procEntries) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const cmdline = await fsp.readFile(`/proc/${entry}/cmdline`, 'utf8');
+      const parts = cmdline.split('\0');
+      const idx = parts.indexOf('--mcp-config');
+      if (idx >= 0 && parts[idx + 1]) live.add(parts[idx + 1]);
+    } catch {
+      /* process vanished mid-scan, or perms error — ignore */
+    }
+  }
+  return live;
+}
+
+async function reapOne(dir, entry, liveCfgPaths) {
   const pidPath = join(dir, entry);
   const cfgPath = pidPath.replace(/\.pid$/, '.json');
+
+  // Sibling-proxy protection: if any live process on this host has this
+  // cfg path on its argv, the cfg is in active use. Skip — leave files
+  // and the child alone.
+  if (liveCfgPaths && liveCfgPaths.has(cfgPath)) {
+    return { skipped: true };
+  }
 
   const pid = await readPid(pidPath);
   if (pid != null && isPidAlive(pid)) {
@@ -63,6 +113,7 @@ async function reapOne(dir, entry) {
   // about, the pid kill is the cherry on top.
   await fsp.unlink(pidPath).catch(() => {});
   await fsp.unlink(cfgPath).catch(() => {});
+  return { skipped: false };
 }
 
 /**
@@ -83,16 +134,22 @@ export async function cleanupOrphanSubagents() {
   if (pidFiles.length === 0) {
     return { scanned: 0, reaped: 0 };
   }
-  log(`[orphan-cleanup] scanning ${pidFiles.length} pid sidecar(s) in ${SUBAGENTS_BASE_DIR}`);
+  // Build the live-cfg set ONCE up front so the per-entry sibling-proxy
+  // check is just a Set membership lookup. Null on non-Linux — reapOne
+  // will fall back to the kill-everything-alive behavior.
+  const liveCfgPaths = await readLiveCfgPathsFromProc();
+  log(`[orphan-cleanup] scanning ${pidFiles.length} pid sidecar(s) in ${SUBAGENTS_BASE_DIR} (live cfg paths in /proc: ${liveCfgPaths ? liveCfgPaths.size : 'unavailable'})`);
   let reaped = 0;
+  let skipped = 0;
   for (const entry of pidFiles) {
     try {
-      await reapOne(SUBAGENTS_BASE_DIR, entry);
-      reaped++;
+      const r = await reapOne(SUBAGENTS_BASE_DIR, entry, liveCfgPaths);
+      if (r.skipped) skipped++;
+      else reaped++;
     } catch (err) {
       log(`[orphan-cleanup] skipping ${entry}: ${err.message}`);
     }
   }
-  log(`[orphan-cleanup] reaped ${reaped}/${pidFiles.length} orphan subagents`);
-  return { scanned: pidFiles.length, reaped };
+  log(`[orphan-cleanup] reaped ${reaped}/${pidFiles.length} orphan subagents (${skipped} protected as live-sibling)`);
+  return { scanned: pidFiles.length, reaped, skipped };
 }
