@@ -1,8 +1,47 @@
 // ─── SSE Event Stream ─────────────────────────────────────
 
+import { networkInterfaces } from 'os';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { RECONNECT_INITIAL_MS, RECONNECT_MAX_MS } from './constants.mjs';
 import { log } from './logging.mjs';
 import { EventDispatcher } from './event-dispatcher.mjs';
+
+// Plugin version — read once at module load from the same plugin.json
+// the marketplace consults, so we never drift out of sync with the
+// actual installed version. Falls back to 'unknown' if the file moves
+// in some weird install layout.
+const PLUGIN_VERSION = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const raw = readFileSync(join(here, '..', '.claude-plugin', 'plugin.json'), 'utf8');
+    return String(JSON.parse(raw).version || '').trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+})();
+
+/**
+ * Best-effort local IP. Picks the first non-internal IPv4 address
+ * across all NICs. Returns 'unknown' on hosts where /api isn't
+ * reachable from a routable interface (rare). Server prefers this
+ * value over its own x-real-ip / x-forwarded-for inference because
+ * reverse proxies obscure the true peer; the plugin knows what NIC
+ * it actually connects from.
+ */
+function detectLocalIp() {
+  try {
+    const ifaces = networkInterfaces();
+    for (const list of Object.values(ifaces)) {
+      if (!list) continue;
+      for (const addr of list) {
+        if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+      }
+    }
+  } catch { /* fall through */ }
+  return 'unknown';
+}
 
 /**
  * Connect to AWB's SSE /api/events/stream and forward ticket events
@@ -65,8 +104,17 @@ export class EventStream {
 
     try {
       this.#abortController = new AbortController();
+      // X-Plugin-Ip / X-Plugin-Version let the server stamp Agent
+      // Details with the plugin's actual local IP + version instead
+      // of inferring from x-real-ip / x-forwarded-for (which gets
+      // mangled by reverse proxies). Old plugins that don't ship
+      // these headers fall back to 'unknown' on the server side.
       const resp = await fetch(this.#url, {
-        headers: { Accept: 'text/event-stream' },
+        headers: {
+          Accept: 'text/event-stream',
+          'X-Plugin-Ip': detectLocalIp(),
+          'X-Plugin-Version': PLUGIN_VERSION,
+        },
         signal: this.#abortController.signal,
       });
 
