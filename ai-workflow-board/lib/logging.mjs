@@ -1,14 +1,12 @@
-// ─── File logger + crash instrumentation ──────────────────
-// Persists proxy logs to disk and wires global crash/exit listeners so that
-// anything pushing the process toward termination leaves a trace. Keep this
-// module's import surface tiny (no class imports) so it can be imported from
-// everywhere without circular-import risk.
+// ─── File logger + minimal crash instrumentation ──────────
+// Persists proxy logs to disk and wires a few global handlers so anything
+// pushing the process toward exit leaves a trace. Kept import-light so it
+// can be pulled in everywhere without circular-import risk.
 
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-// Private — intentionally NOT exported. Callers log through log()/send().
 const LOG_DIR = join(
   process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
   'channels', 'awb',
@@ -18,7 +16,7 @@ const LOG_MAX_BYTES = 5 * 1024 * 1024;
 
 try { mkdirSync(LOG_DIR, { recursive: true }); } catch { /* ignore */ }
 
-export function writeLogLine(line) {
+function writeLogLine(line) {
   try {
     const st = statSync(LOG_PATH);
     if (st.size > LOG_MAX_BYTES) {
@@ -34,21 +32,6 @@ export function log(msg) {
   writeLogLine(line);
 }
 
-// ─── Crash / exit instrumentation ─────────────────────────
-// Claude CLI keeps MCP servers on stdio pipes; if anything pushes this process
-// toward exit we want the cause recorded. `exit` is sync-only, so the final
-// line is written via appendFileSync. SIGPIPE on stdout is handled explicitly
-// because an unhandled EPIPE kills Node by default.
-//
-// Signal-handler ownership rule (Phase 4 race fix): logging.mjs only OBSERVES
-// SIGTERM/SIGINT/SIGHUP — it logs them and never calls `process.exit`. The
-// owning entrypoint (daemon.mjs / proxy.mjs) registers its own async shutdown
-// handler that closes SSE, drains subagents, releases the lockfile, then
-// exits. Before this rule, logging.mjs's sync `process.exit(0)` ran first
-// (registration order: imported -> entrypoint), winning the listener race
-// and orphaning subagents on `kill -TERM`. SIGPIPE stays here because it has
-// no async cleanup — just record and let the proxy decide.
-
 process.on('uncaughtException', (err) => {
   log(`Uncaught error: ${err?.stack || err?.message || err}`);
 });
@@ -58,46 +41,18 @@ process.on('unhandledRejection', (err) => {
 process.on('exit', (code) => {
   writeLogLine(`[${new Date().toISOString()}] [pid=${process.pid}] EXIT code=${code}\n`);
 });
-// Observe-only — no process.exit. Entrypoint owns the actual shutdown.
-for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
-  process.on(sig, () => log(`Received ${sig}`));
-}
-process.on('SIGPIPE', () => log('Received SIGPIPE'));
+
+// EPIPE on stdout means Claude CLI closed its read end — no point staying up.
 process.stdout.on('error', (err) => {
-  log(`stdout error: code=${err?.code} msg=${err?.message} stack=${err?.stack?.split('\n')[1] || ''}`);
-  // EPIPE usually means Claude CLI closed its read end — no point staying up.
   if (err?.code === 'EPIPE') process.exit(0);
+  log(`stdout error: code=${err?.code} msg=${err?.message}`);
 });
 process.stderr.on('error', () => { /* swallow; stderr loss is non-fatal */ });
 
-// DIAG v0.6.9: trace stdin lifecycle — fires BEFORE rl.on('close') so we can see
-// whether Claude CLI sent any final line or just dropped the pipe silently.
-process.stdin.on('end', () => log('[DIAG] stdin end event (EOF from Claude CLI)'));
-process.stdin.on('error', (err) => log(`[DIAG] stdin error: code=${err?.code} msg=${err?.message}`));
-process.stdin.on('close', () => log('[DIAG] stdin close event'));
-
 export function send(obj) {
-  const payload = JSON.stringify(obj) + '\n';
-  // DIAG v0.6.9: record every outbound write so we can correlate with stdin close.
-  // method + id/params-type + byte length; truncate content to keep log small.
-  try {
-    const method = obj?.method || (obj?.error ? 'error' : obj?.result ? 'result' : '?');
-    const metaType = obj?.params?.meta?.type ?? '';
-    log(`[DIAG] stdout.write method=${method} metaType=${metaType} bytes=${Buffer.byteLength(payload)}`);
-  } catch { /* ignore diag failure */ }
-  const ok = process.stdout.write(payload);
-  if (!ok) log('[DIAG] stdout.write returned false (backpressure)');
+  process.stdout.write(JSON.stringify(obj) + '\n');
 }
 
 export function sendError(id, code, message) {
   send({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
-}
-
-/** Send a channel notification to Claude — the core delivery mechanism */
-export function sendChannelEvent(content, meta = {}) {
-  send({
-    jsonrpc: '2.0',
-    method: 'notifications/claude/channel',
-    params: { content, meta },
-  });
 }

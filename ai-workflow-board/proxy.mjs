@@ -1,313 +1,78 @@
 #!/usr/bin/env node
 
 /**
- * AWB MCP Proxy — stdio-to-HTTP bridge with Channel support
+ * AWB MCP Proxy — stdio-to-HTTP bridge for Claude CLI.
  *
- * Architecture:
- *   Claude CLI <--stdio--> proxy.mjs <--HTTP--> AWB Server
- *                                    <--SSE---  AWB /api/events/stream
+ *   Claude CLI <--stdio--> proxy.mjs <--HTTP--> AWB Server (/mcp)
  *
- * Two responsibilities:
- * 1. Proxy: Forward MCP JSON-RPC messages between Claude CLI (stdio) and AWB server (HTTP)
- * 2. Channel: Listen to AWB's SSE event stream and deliver agent_trigger events to Claude
- *
- * The proxy intercepts the MCP `initialize` handshake to inject `claude/channel`
- * capability — without this, Claude CLI ignores channel notifications.
+ * Single responsibility: forward MCP JSON-RPC traffic. SSE channel events,
+ * subagent delegation, persistent ticket/chat sessions, and CLI adapters
+ * moved to the standalone @awb/agent-manager package (apps/agent-manager
+ * inside the ai-workflow-board repo).
  *
  * Config: ~/.claude/channels/awb/config.json
- * { "url": "https://awb.example.com:7700", "apiKey": "awb_..." }
+ *   { "url": "https://awb.example.com:7700", "apiKey": "awb_..." }
  */
 
 import { createInterface } from 'readline';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-
-import {
-  CHANNEL_INSTRUCTIONS,
-  DELEGATION_DEFAULTS,
-} from './lib/constants.mjs';
+import { loadConfig } from './lib/config.mjs';
 import { log, send, sendError } from './lib/logging.mjs';
-import { loadConfig, resolveAgentId } from './lib/config.mjs';
-import { acquireAgentLock, inspectAgentLock } from './lib/agent-lockfile.mjs';
-import { fetchTicketContext, fetchChatRoomHistory } from './lib/rest.mjs';
-import {
-  composeTriggerPrompt,
-  composeChatPrompt,
-  composeChatRoomPrompt,
-} from './lib/prompts.mjs';
-import { PresenceHeartbeat } from './lib/presence-heartbeat.mjs';
-import { InstanceHeartbeat } from './lib/instance-heartbeat.mjs';
 import { McpForwardSession } from './lib/mcp-forward-session.mjs';
-import { EventStream } from './lib/event-stream.mjs';
-import { SubagentManager } from './lib/subagent-manager.mjs';
-import { ChatSessionManager } from './lib/chat-session-manager.mjs';
-import { TicketSessionManager } from './lib/ticket-session-manager.mjs';
-import { uploadIfNewErrors } from './lib/error-log-uploader.mjs';
-import { onFlushThreshold } from './lib/event-log-recorder.mjs';
-import { cleanupOrphanSubagents } from './lib/orphan-cleanup.mjs';
-import { FsBrowser } from './lib/fs-browser.mjs';
-import { SubagentMonitor } from './lib/subagent-monitor.mjs';
-import { createAdapter, KNOWN_CLI_TYPES } from './lib/cli-adapters/index.mjs';
 
-// Plugin version is read from plugin.json at boot so proxy and daemon never
-// drift away from the installed version. Lazy + try/catch so a malformed
-// plugin.json doesn't stop module load (matters for `node --test` import).
-function readPluginVersion() {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const raw = readFileSync(join(here, '.claude-plugin', 'plugin.json'), 'utf8');
-    return String(JSON.parse(raw).version || '').trim() || 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
-
-// ─── MCP Proxy ────────────────────────────────────────────
-//
-// Forward session lifecycle — including idle-TTL keepalive, silent
-// re-initialize on stale session, and network retry — lives in
-// lib/mcp-forward-session.mjs. This file just wires it to the stdio loop.
-
-/**
- * Patch the initialize response to declare claude/channel capability.
- * Without this, Claude CLI won't process notifications/claude/channel messages.
- * Ref: Discord plugin declares this via MCP SDK capabilities.experimental['claude/channel']
- */
-function patchInitializeResponse(body) {
-  if (!body?.result) return body;
-
-  // Inject channel capability
-  const caps = body.result.capabilities ??= {};
-  const exp = caps.experimental ??= {};
-  exp['claude/channel'] = {};
-
-  // Append channel instructions
-  const existing = body.result.instructions || '';
-  body.result.instructions = [existing, '', CHANNEL_INSTRUCTIONS]
-    .join('\n').trim();
-
-  return body;
-}
-
-// ─── Entry Points ─────────────────────────────────────────
-
-/** Handle the not-configured state — respond to MCP handshake with empty tools */
+/** Handle the not-configured state — respond to MCP handshake with empty tools. */
 function runUnconfigured(rl) {
   log('Not configured. Run /awb:setup <server-url> <api-key> to connect.');
 
   rl.on('line', (line) => {
-    try {
-      const msg = JSON.parse(line);
-      if (msg.method === 'initialize') {
-        send({
-          jsonrpc: '2.0',
-          id: msg.id,
-          result: {
-            protocolVersion: '2025-03-26',
-            capabilities: { tools: {} },
-            serverInfo: { name: 'ai-workflow-board', version: '0.2.0' },
-          },
-        });
-      } else if (msg.method === 'tools/list') {
-        send({ jsonrpc: '2.0', id: msg.id, result: { tools: [] } });
-      } else if (msg.method === 'notifications/initialized') {
-        // no response
-      } else if (msg.id !== undefined) {
-        sendError(msg.id, -32000, 'AWB not configured. Run /awb:setup <server-url> <api-key>');
-      }
-    } catch { /* ignore malformed */ }
-  });
-}
-
-/**
- * Refuse to start a second SSE owner — daemon already holds the channel
- * lockfile. We respond to MCP handshake with empty tools (so Claude CLI
- * doesn't keep retrying) and send each subsequent request a clear error
- * pointing at the lockfile contention. The caller can `AWB_FORCE_LOCK=1` to
- * take over (rare; used by upgrade scripts).
- */
-function runLocked(rl, ownerInfo) {
-  const ownerDesc = `pid=${ownerInfo?.pid ?? '?'} role=${ownerInfo?.role ?? '?'}`;
-  log(`Proxy: AWB agent lockfile already held by ${ownerDesc}. Refusing to start.`);
-  log('Proxy: stop the daemon (or set AWB_FORCE_LOCK=1) to let this proxy take over.');
-
-  rl.on('line', (line) => {
-    try {
-      const msg = JSON.parse(line);
-      if (msg.method === 'initialize') {
-        send({
-          jsonrpc: '2.0',
-          id: msg.id,
-          result: {
-            protocolVersion: '2025-03-26',
-            capabilities: { tools: {} },
-            serverInfo: { name: 'ai-workflow-board', version: '0.0.0-locked' },
-          },
-        });
-      } else if (msg.method === 'tools/list') {
-        send({ jsonrpc: '2.0', id: msg.id, result: { tools: [] } });
-      } else if (msg.method === 'notifications/initialized') {
-        // no response
-      } else if (msg.id !== undefined) {
-        sendError(msg.id, -32000, `AWB daemon already on this channel (${ownerDesc}). Stop it or set AWB_FORCE_LOCK=1.`);
-      }
-    } catch { /* ignore malformed */ }
-  });
-}
-
-/** Main proxy — bridges stdio MCP to remote AWB server + SSE channel */
-function runProxy(rl, config, lock) {
-  const mcpUrl = config.url.replace(/\/$/, '') + '/mcp';
-  const pluginVersion = readPluginVersion();
-  // Phase 2: pick the CLI adapter once at startup. Same instance is shared
-  // across SubagentManager + Chat/TicketSessionManager.
-  const adapter = createAdapter(config.cli);
-  log(`Proxy starting (server=${config.url} version=${pluginVersion} cli=${adapter.cliType})`);
-
-  // Phase 3 D-52: presence heartbeat. Resolves agent_id from agent.json (or via MCP whoami
-  // if null), then pings every 30s so the dashboard keeps this agent marked online.
-  // No-op if agent.json is missing — nothing pings, nothing breaks.
-  let resolvedAgentId = null;
-  const agentIdReady = resolveAgentId(config).then((id) => { resolvedAgentId = id; return id; });
-  const presenceHeartbeat = { _real: null };
-  // Shared "server-just-came-back" hook fired by SSE reconnect and forward-session
-  // re-init. Kicks an out-of-band ping so the dashboard recovers ONLINE within
-  // seconds of a server restart instead of waiting for the next 30s heartbeat
-  // tick (and risking the 90s server-side sweep marking us offline first).
-  // No-op until PresenceHeartbeat is constructed (post-handshake) — fire-and-forget.
-  const kickPresencePing = () => {
-    presenceHeartbeat._real?.pingNow().catch(() => { /* logged inside pingNow */ });
-  };
-
-  // Phase 3 instance heartbeat — separate per-process registry so the admin
-  // dashboard can list every daemon/proxy without collapsing them onto a
-  // single Agent row.
-  const instanceHeartbeat = { _real: null };
-
-  const forwardSession = new McpForwardSession(mcpUrl, config.apiKey, kickPresencePing);
-  let eventStream = null;
-  let uploadTimer = null;
-
-  // Reap orphaned subagents from previous proxy runs. When the proxy dies
-  // hard (SIGKILL / crash / OS reboot), the children it spawned survive
-  // because they're `detached: true` + unref()'d. Each spawn writes a
-  // .pid sidecar next to its mcp-config tempfile; this sweep reads those
-  // sidecars and SIGTERMs any pid that's still alive, then unlinks both
-  // files. Fire-and-forget: if this fails, log it but don't block the
-  // normal proxy boot — we can't leave the user unable to connect just
-  // because stale-file cleanup hit an edge case.
-  cleanupOrphanSubagents()
-    .then((r) => {
-      if (r.scanned > 0) log(`Orphan subagent cleanup: scanned=${r.scanned} reaped=${r.reaped}`);
-    })
-    .catch((err) => log(`Orphan subagent cleanup failed: ${err.message}`));
-
-  // Phase 4 Plan 04-02: instantiate SubagentManager. Plan 04-03 wires #handleTrigger
-  // and #handleChatRequest consumers + the onExit completion notification below.
-  // Phase 2: managers receive the per-process CLI adapter so claude / gemini /
-  // future CLIs can share the same lifecycle code.
-  const subagentManager = new SubagentManager(config, adapter);
-  subagentManager.init().catch((err) => log(`SubagentManager init failed: ${err.message}`));
-
-  // v0.7.0: persistent per-room chat sessions (separate lifecycle from trigger subagents).
-  const chatSessionManager = new ChatSessionManager(config, adapter);
-
-  // v0.8.0: persistent per-ticket sessions (trigger + board_update routed to same subagent).
-  const ticketSessionManager = new TicketSessionManager(config, adapter);
-
-  // v0.31.0: file-browser handler. Off unless config.fs_browser.enabled=true
-  // AND config.fs_browser.roots has at least one resolvable path. See
-  // lib/fs-browser.mjs for scope enforcement details.
-  const fsBrowser = new FsBrowser(config, config.fs_browser || {});
-
-  // v0.32: subagent-monitor — mirrors every spawned subagent's stream-json to
-  // the AWB server so the web UI can render a live transcript across every
-  // agent machine. workspace_id is null at construction; the server falls
-  // back to the API key's bound workspace on register POST.
-  const subagentMonitor = new SubagentMonitor(config, null);
-  subagentManager.setMonitor(subagentMonitor);
-  chatSessionManager.setMonitor(subagentMonitor);
-  ticketSessionManager.setMonitor(subagentMonitor);
-
-  // Phase 4 D-69: completion notification. Fires for every subagent exit
-  // (normal completion, non-zero failure, or TTL SIGTERM/SIGKILL timeout).
-  // SubagentManager invokes this inside its exit handler — see Plan 04-02 #wireExitHandler.
-  subagentManager.onExit = ({ pid, record, code, signal, durationSec }) => {
-    const label = record.kind === 'chat' ? 'Chat Subagent' : 'Subagent';
-    let msg;
-    if (signal === 'SIGTERM' || signal === 'SIGKILL') {
-      msg = `[AWB ${label}] ticket=${record.ticket_id || '-'} TIMED OUT after ${durationSec}s`;
-    } else if (code === 0) {
-      msg = `[AWB ${label}] ticket=${record.ticket_id || '-'} completed (duration=${durationSec}s)`;
-    } else {
-      msg = `[AWB ${label}] ticket=${record.ticket_id || '-'} FAILED (exit=${code}, duration=${durationSec}s, see proxy logs)`;
-    }
-    // Strategy A fix: do NOT send notifications/claude/channel for subagent_complete.
-    // Any sendChannelEvent() causes Claude CLI to close proxy stdin within ms, killing the proxy.
-    log(msg);
-  };
-
-  const shutdownHandler = async (signal) => {
-    log(`Proxy received ${signal} — terminating subagents`);
-    presenceHeartbeat._real?.stop();
-    instanceHeartbeat._real?.stop();
-    forwardSession.stop();
-    if (uploadTimer) { clearInterval(uploadTimer); uploadTimer = null; }
-    eventStream?.stop();
-    try { await subagentManager.stop(); } catch (err) { log(`shutdown: ${err.message}`); }
-    try { await chatSessionManager.stop(); } catch (err) { log(`shutdown (chat): ${err.message}`); }
-    try { await ticketSessionManager.stop(); } catch (err) { log(`shutdown (ticket): ${err.message}`); }
-    try { subagentMonitor.stop(); } catch (err) { log(`shutdown (monitor): ${err.message}`); }
-    // Phase 4: drop the agent lockfile last so a sibling can boot only after
-    // our subagents are gone.
-    try { lock?.release(); } catch (err) { log(`shutdown (lockfile): ${err.message}`); }
-    process.exit(0);
-  };
-  process.once('SIGTERM', () => shutdownHandler('SIGTERM'));
-  process.once('SIGINT', () => shutdownHandler('SIGINT'));
-
-  // Phase 4: SIGHUP — re-read config.json + apply non-disruptive changes.
-  // Server URL / apiKey changes still need a Claude-CLI restart (this proxy
-  // is bound to the URL it opened) so we just log a notice in that case.
-  process.on('SIGHUP', () => {
-    const next = loadConfig();
-    if (!next?.url || !next?.apiKey) {
-      log('SIGHUP: config.json missing or unparseable — keeping previous config');
-      return;
-    }
-    const disruptive = next.url !== config.url || next.apiKey !== config.apiKey;
-    Object.assign(config, next);
-    log(
-      `SIGHUP: config reloaded (delegation.maxConcurrent=${config.delegation.maxConcurrent} ` +
-      `ttl=${config.delegation.ttlMinutes}min idle=${config.delegation.idleMinutes}min)` +
-      (disruptive ? ' — server/apiKey changes need a proxy restart' : ''),
-    );
-  });
-
-  rl.on('line', async (line) => {
-    // DIAG v0.6.9: log EVERY inbound line — truncated — so we can see what (if anything)
-    // Claude CLI sends right before closing stdin.
-    try {
-      const preview = line.length > 160 ? line.slice(0, 160) + '…' : line;
-      log(`[DIAG] stdin.line bytes=${Buffer.byteLength(line)} preview=${preview}`);
-    } catch { /* ignore */ }
     let msg;
     try { msg = JSON.parse(line); } catch { return; }
 
-    // ── Intercept: initialize ──────────────────────────────
-    // Patch the server's response to include claude/channel capability
+    if (msg.method === 'initialize') {
+      send({
+        jsonrpc: '2.0',
+        id: msg.id,
+        result: {
+          protocolVersion: '2025-03-26',
+          capabilities: { tools: {} },
+          serverInfo: { name: 'ai-workflow-board', version: '0.0.0-unconfigured' },
+        },
+      });
+    } else if (msg.method === 'tools/list') {
+      send({ jsonrpc: '2.0', id: msg.id, result: { tools: [] } });
+    } else if (msg.id !== undefined && msg.method !== 'notifications/initialized') {
+      sendError(msg.id, -32000, 'AWB not configured. Run /awb:setup <server-url> <api-key>');
+    }
+  });
+}
+
+function runProxy(rl, config) {
+  const mcpUrl = config.url.replace(/\/$/, '') + '/mcp';
+  log(`Proxy starting (server=${config.url})`);
+
+  const forwardSession = new McpForwardSession(mcpUrl, config.apiKey);
+
+  const shutdown = (signal) => {
+    log(`Proxy received ${signal} — shutting down`);
+    forwardSession.stop();
+    process.exit(0);
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
+
+  rl.on('line', async (line) => {
+    let msg;
+    try { msg = JSON.parse(line); } catch { return; }
+
     if (msg.method === 'initialize') {
       try {
-        // Inject awb/schemaVersion so the server's schemaVersion gate accepts this
-        // proxy session. Claude CLI's raw initialize doesn't include it, causing the
-        // server to reject with "MCP proxy schemaVersion mismatch".
+        // Inject awb/schemaVersion so the server's schemaVersion gate accepts
+        // this proxy session. Claude CLI's raw initialize doesn't include it.
         msg.params ??= {};
         msg.params.capabilities ??= {};
         msg.params.capabilities.experimental ??= {};
         msg.params.capabilities.experimental['awb/schemaVersion'] = { version: 2 };
         const result = await forwardSession.handleClaudeInitialize(msg);
-        send(patchInitializeResponse(result.body));
+        send(result.body);
       } catch (err) {
         log(`Initialize error: ${err.message}`);
         if (msg.id !== undefined) sendError(msg.id, -32000, `AWB proxy error: ${err.message}`);
@@ -315,57 +80,12 @@ function runProxy(rl, config, lock) {
       return;
     }
 
-    // ── Intercept: initialized notification ────────────────
-    // Start SSE stream AFTER handshake completes (Claude is ready to receive)
-    if (msg.method === 'notifications/initialized') {
-      if (!eventStream) {
-        eventStream = new EventStream(config, subagentManager, chatSessionManager, ticketSessionManager, fsBrowser, kickPresencePing);
-        eventStream.start();
-        // Wait for agent_id resolution, then start heartbeat
-        agentIdReady.then((agentId) => {
-          presenceHeartbeat._real = new PresenceHeartbeat(config, agentId);
-          presenceHeartbeat._real.start();
-          instanceHeartbeat._real = new InstanceHeartbeat(config, agentId, {
-            mode: 'proxy',
-            version: pluginVersion,
-            cli: adapter.cliType,
-            cliAdapters: KNOWN_CLI_TYPES,
-          });
-          instanceHeartbeat._real.start();
-          // v0.26.0: ticket-poller removed. Server-side TicketSupervisorService
-          // re-pushes agent_trigger for stale allocations (my_last_update_at
-          // past 30 min), with force_respawn escalation after 5 min cooldown.
-          // v0.15.0: 30-second periodic tick + threshold-driven immediate flush.
-          // Event-log entries need to reach the admin Agent Logs viewer fast
-          // enough to actually debug "did the plugin see this event?" — the
-          // old 10-minute cadence made the feature feel broken even when it
-          // worked. Errors still piggyback on the same upload so we don't
-          // multiply POSTs.
-          const fireUpload = () => uploadIfNewErrors(config, agentId, pluginVersion).catch(() => {});
-          fireUpload();
-          uploadTimer = setInterval(fireUpload, 30 * 1000);
-          if (typeof uploadTimer.unref === 'function') uploadTimer.unref();
-          // Kick an out-of-band upload when the event buffer crosses 10 entries
-          // so a burst of SSE events doesn't sit around for 30s.
-          onFlushThreshold(fireUpload);
-        });
-        log('SSE event stream started (post-handshake)');
-      }
-      return;
-    }
+    if (msg.method === 'notifications/initialized') return;
 
-    // ── Forward everything else to AWB server ──────────────
-    // forwardSession handles: stale-session recovery (re-init + retry),
-    // network/5xx retry with backoff, and 4-minute keepalive so the
-    // server's 10-min idle TTL never fires in the first place.
     try {
       const result = await forwardSession.forward(msg);
-
       if (result.lines) {
-        // SSE response — write each JSON-RPC message directly
-        for (const line of result.lines) {
-          process.stdout.write(line + '\n');
-        }
+        for (const l of result.lines) process.stdout.write(l + '\n');
       } else if (result.body && msg.id !== undefined) {
         send(result.body);
       }
@@ -380,22 +100,10 @@ function runProxy(rl, config, lock) {
     }
   });
 
-  rl.on('close', async () => {
-    // stdin close = parent Claude CLI went away (exit, terminal closed, crash).
-    // v0.24.2: route through shutdownHandler to actually tear down subagents.
-    // The old "deliberately orphan" design leaked children + cfg files every
-    // time ralf-style harnesses cycled claude.exe every 5s. v0.26.0: poller
-    // is gone so short-lived proxies rarely have subagents to clean up here.
-    // If a short-lived proxy does dispatch an SSE trigger, the child is
-    // killed on stdin close; the server-side supervisor re-pushes on the
-    // next stale-detection tick so no work is lost.
-    await shutdownHandler('stdin-close');
-  });
+  rl.on('close', () => shutdown('stdin-close'));
 
   log(`Proxy ready (server: ${config.url})`);
 }
-
-// ─── Main (only when executed directly, not when imported for tests) ───
 
 const isDirectExecution =
   import.meta.url === `file://${process.argv[1]}` ||
@@ -408,59 +116,8 @@ if (isDirectExecution) {
   if (!config?.url || !config?.apiKey) {
     runUnconfigured(rl);
   } else {
-    // Phase 4: acquire the channel lockfile. AWB_FORCE_LOCK=1 in the env (set
-    // by upgrade tooling) overrides a live owner. On EAGENTLOCKED we run the
-    // degraded `runLocked` loop so Claude CLI gets a clean error instead of
-    // a vanished MCP server, but we do NOT spin up SSE / subagents.
-    const force = String(process.env.AWB_FORCE_LOCK || '') === '1';
-    let lock;
-    try {
-      lock = acquireAgentLock({ role: 'proxy', version: '0.0.0', force });
-    } catch (err) {
-      if (err.code === 'EAGENTLOCKED') {
-        runLocked(rl, inspectAgentLock());
-      } else {
-        log(`Proxy fatal: ${err?.stack || err?.message || err}`);
-        process.exit(1);
-      }
-    }
-    if (lock) runProxy(rl, config, lock);
+    runProxy(rl, config);
   }
 }
 
-export {
-  SubagentManager,
-  ChatSessionManager,
-  TicketSessionManager,
-  DELEGATION_DEFAULTS,
-  loadConfig,
-  EventStream,
-  McpForwardSession,
-  fetchTicketContext,
-  composeTriggerPrompt,
-  composeChatPrompt,
-  composeChatRoomPrompt,
-  fetchChatRoomHistory,
-};
-
-// Test-only seams — only exported when AWB_TEST_MODE is set. Plan 04-04 integration
-// tests use these to invoke the private #handleTrigger / #handleChatRequest / #handleChatRoomMessage handlers
-// without opening a real SSE stream. Each seam creates a transient EventStream bound
-// to the provided (config, subagentManager) tuple and dispatches the raw payload.
-export const _testDispatchTrigger =
-  process.env.AWB_TEST_MODE === 'true'
-    ? (config, subagentManager, raw, ticketSessionManager = null) =>
-        new EventStream(config, subagentManager, null, ticketSessionManager)._testDispatchTrigger(raw)
-    : undefined;
-
-export const _testDispatchChatRequest =
-  process.env.AWB_TEST_MODE === 'true'
-    ? (config, subagentManager, raw, chatSessionManager = null) =>
-        new EventStream(config, subagentManager, chatSessionManager)._testDispatchChatRequest(raw)
-    : undefined;
-
-export const _testDispatchChatRoomMessage =
-  process.env.AWB_TEST_MODE === 'true'
-    ? (config, subagentManager, raw, chatSessionManager = null) =>
-        new EventStream(config, subagentManager, chatSessionManager)._testDispatchChatRoomMessage(raw)
-    : undefined;
+export { McpForwardSession, loadConfig };
