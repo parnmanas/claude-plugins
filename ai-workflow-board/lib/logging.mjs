@@ -39,6 +39,15 @@ export function log(msg) {
 // toward exit we want the cause recorded. `exit` is sync-only, so the final
 // line is written via appendFileSync. SIGPIPE on stdout is handled explicitly
 // because an unhandled EPIPE kills Node by default.
+//
+// Signal-handler ownership rule (Phase 4 race fix): logging.mjs only OBSERVES
+// SIGTERM/SIGINT/SIGHUP — it logs them and never calls `process.exit`. The
+// owning entrypoint (daemon.mjs / proxy.mjs) registers its own async shutdown
+// handler that closes SSE, drains subagents, releases the lockfile, then
+// exits. Before this rule, logging.mjs's sync `process.exit(0)` ran first
+// (registration order: imported -> entrypoint), winning the listener race
+// and orphaning subagents on `kill -TERM`. SIGPIPE stays here because it has
+// no async cleanup — just record and let the proxy decide.
 
 process.on('uncaughtException', (err) => {
   log(`Uncaught error: ${err?.stack || err?.message || err}`);
@@ -49,12 +58,11 @@ process.on('unhandledRejection', (err) => {
 process.on('exit', (code) => {
   writeLogLine(`[${new Date().toISOString()}] [pid=${process.pid}] EXIT code=${code}\n`);
 });
-for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGPIPE']) {
-  process.on(sig, () => {
-    log(`Received ${sig}`);
-    if (sig !== 'SIGPIPE') process.exit(0);
-  });
+// Observe-only — no process.exit. Entrypoint owns the actual shutdown.
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  process.on(sig, () => log(`Received ${sig}`));
 }
+process.on('SIGPIPE', () => log('Received SIGPIPE'));
 process.stdout.on('error', (err) => {
   log(`stdout error: code=${err?.code} msg=${err?.message} stack=${err?.stack?.split('\n')[1] || ''}`);
   // EPIPE usually means Claude CLI closed its read end — no point staying up.
