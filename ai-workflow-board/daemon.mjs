@@ -21,23 +21,27 @@
  *     children (orphan-cleanup reads each running process's cmdline for the
  *     `--mcp-config` flag; live cfg paths are protected from reaping).
  *
- * Concurrent run with proxy.mjs: technically allowed (orphan-cleanup is
- * sibling-aware) but DISCOURAGED — both will receive the same SSE events
- * and try to spawn for them. The AWB server's per-agent main-session
- * routing (events.controller.ts AGENT_ROUTED_EVENTS) will pin trigger /
- * chat / mention events to ONE of them, so most events go to one path —
- * but the broadcast events and any unpinned routing fall to whichever
- * sees them first. Phase 4 will add a lockfile to make the daemon and
- * the legacy proxy mutually exclusive.
+ * Concurrent run with proxy.mjs: prevented by Phase 4's lockfile
+ * (lib/agent-lockfile.mjs). Whichever process boots first holds
+ * `~/.claude/channels/awb/agent.lock`; the other aborts at startup unless
+ * launched with --force (daemon CLI flag) or AWB_FORCE_LOCK=1 (proxy env).
+ * This eliminates the broadcast-event double-processing risk that the
+ * orphan-cleanup + main-session-pinning soft mutex left open.
+ *
+ * Phase 4 signal contract:
+ *   - SIGTERM/SIGINT  → graceful drain + lockfile release + exit
+ *   - SIGUSR1         → git pull on plugin repo, then drain + re-exec self
+ *   - SIGHUP          → re-read config.json + apply non-disruptive changes
  *
  * Out of scope for Phase 1 (deferred to later phases):
  *   - non-claude CLI adapters (gemini, codex, …) — Phase 2
  *   - AWB web UI / control surface for the daemon — Phase 3
- *   - daemon self-update + per-agent config UI + lockfile — Phase 4
  */
 
 import { loadConfig, resolveAgentId } from './lib/config.mjs';
 import { log } from './lib/logging.mjs';
+import { acquireAgentLock } from './lib/agent-lockfile.mjs';
+import { runSelfUpdate } from './lib/self-update.mjs';
 import { PresenceHeartbeat } from './lib/presence-heartbeat.mjs';
 import { EventStream } from './lib/event-stream.mjs';
 import { SubagentManager } from './lib/subagent-manager.mjs';
@@ -57,6 +61,7 @@ import { createAdapter, ADAPTER_CAPABILITIES } from './lib/cli-adapters/index.mj
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { spawn } from 'child_process';
 
 function readPluginVersion() {
   try {
@@ -68,13 +73,36 @@ function readPluginVersion() {
   }
 }
 
-async function runDaemon() {
-  const config = loadConfig();
+function parseDaemonFlags(argv) {
+  return {
+    force: argv.includes('--force') || argv.includes('-f'),
+  };
+}
+
+async function runDaemon(argv = process.argv.slice(2)) {
+  let config = loadConfig();
   if (!config?.url || !config?.apiKey) {
     log('Daemon: not configured. Run /awb:setup <server-url> <api-key> to connect.');
     process.exit(1);
   }
   const version = readPluginVersion();
+  const flags = parseDaemonFlags(argv);
+
+  // Phase 4: hard mutual exclusion. If a sibling daemon or legacy proxy is
+  // already on this channel, abort startup unless --force was passed. We
+  // acquire BEFORE any heavy state (subagent managers, SSE, presence) so a
+  // refused startup doesn't briefly double-spawn anything.
+  let lock;
+  try {
+    lock = acquireAgentLock({ role: 'daemon', version, force: flags.force });
+  } catch (err) {
+    if (err.code === 'EAGENTLOCKED') {
+      log(`Daemon: ${err.message}`);
+      process.exit(2);
+    }
+    throw err;
+  }
+
   // Phase 2: pick the CLI adapter once at startup. Same adapter instance is
   // shared across SubagentManager + Chat/TicketSessionManager so all spawn
   // sites agree on argv shape and stream parsing.
@@ -143,6 +171,10 @@ async function runDaemon() {
 
   let eventStream = null;
   let uploadTimer = null;
+  // Phase 4: shutdown can be steered by SIGUSR1 (self-update) — drain
+  // subagents, then re-exec the daemon with the updated plugin code instead
+  // of just exit(0). Set before shutdown() is called.
+  let postShutdownAction = 'exit';
 
   const shutdown = async (signal) => {
     log(`Daemon received ${signal} — terminating subagents`);
@@ -153,10 +185,65 @@ async function runDaemon() {
     try { await chatSessionManager.stop(); } catch (err) { log(`shutdown (chat): ${err.message}`); }
     try { await ticketSessionManager.stop(); } catch (err) { log(`shutdown (ticket): ${err.message}`); }
     try { subagentMonitor.stop(); } catch (err) { log(`shutdown (monitor): ${err.message}`); }
+    // Release lock LAST — before this line another daemon spinning up would
+    // be told "owner alive" and abort, which is exactly what we want until
+    // our subagents are gone.
+    try { lock.release(); } catch (err) { log(`shutdown (lockfile): ${err.message}`); }
+    if (postShutdownAction === 'reexec') {
+      reExecSelf(argv);
+      // reExecSelf exits via process.exit(0) once the child is detached.
+      return;
+    }
     process.exit(0);
   };
   process.once('SIGTERM', () => shutdown('SIGTERM'));
   process.once('SIGINT', () => shutdown('SIGINT'));
+
+  // SIGUSR1 — self-update trigger. POSIX-standard "reload binary" signal.
+  // Used by the (Phase 3) admin endpoint `/admin/agent-manager/instances/:id/restart`
+  // and by an operator running `kill -USR1 <pid>` directly. The handler is
+  // async-safe via a one-shot guard: the second SIGUSR1 during an in-flight
+  // update is ignored (logged) so a flapping endpoint can't queue restarts.
+  let selfUpdateInFlight = false;
+  process.on('SIGUSR1', async () => {
+    if (selfUpdateInFlight) { log('SIGUSR1: self-update already in flight, ignoring'); return; }
+    selfUpdateInFlight = true;
+    try {
+      const result = await runSelfUpdate({ log });
+      log(`Self-update: ${result.summary}`);
+      postShutdownAction = 'reexec';
+      await shutdown('SIGUSR1/self-update');
+    } catch (err) {
+      log(`Self-update failed: ${err?.stack || err?.message || err}`);
+      selfUpdateInFlight = false;
+    }
+  });
+
+  // SIGHUP — config reload. Re-reads ~/.claude/channels/awb/config.json and
+  // applies non-disruptive changes in place. Disruptive changes (server URL
+  // / apiKey / cli type) require a full restart; we log a notice but don't
+  // auto-restart — the operator can chase it with SIGUSR1 if they want.
+  process.on('SIGHUP', () => {
+    const next = loadConfig();
+    if (!next?.url || !next?.apiKey) {
+      log('SIGHUP: config.json missing or unparseable — keeping previous config');
+      return;
+    }
+    const disruptive = (
+      next.url !== config.url ||
+      next.apiKey !== config.apiKey ||
+      String(next.cli || '') !== String(config.cli || '')
+    );
+    // Hot-reloadable: delegation tunables. SubagentManager / session managers
+    // read from the live config object on each spawn; mutating the object in
+    // place propagates without restart.
+    Object.assign(config, next);
+    log(
+      `SIGHUP: config reloaded (delegation.maxConcurrent=${config.delegation.maxConcurrent} ` +
+      `ttl=${config.delegation.ttlMinutes}min idle=${config.delegation.idleMinutes}min)` +
+      (disruptive ? ' — server/apiKey/cli changes need SIGUSR1 to take effect' : ''),
+    );
+  });
 
   // Start SSE immediately — no MCP handshake gate (the daemon owns its own
   // lifecycle; the only reason proxy.mjs waits for `notifications/initialized`
@@ -188,6 +275,24 @@ async function runDaemon() {
   });
 
   log('AWB Agent Manager ready');
+}
+
+function reExecSelf(argv) {
+  // Self-restart after self-update. Spawn a fresh `node daemon.mjs ...`
+  // detached so the child outlives our process.exit; inherit stdio so logs
+  // continue going to the same place (systemd journal, terminal, etc.).
+  // We strip any prior --force / -f from argv (they're no longer needed —
+  // the lock has been released) and re-add --force as a belt-and-braces
+  // measure for the rare case where our sync exit listener couldn't unlink.
+  const passthrough = argv.filter((a) => a !== '--force' && a !== '-f');
+  const child = spawn(process.execPath, [process.argv[1], ...passthrough, '--force'], {
+    detached: true,
+    stdio: 'inherit',
+    env: process.env,
+  });
+  child.unref();
+  log(`Self-update: re-exec spawned pid=${child.pid}`);
+  process.exit(0);
 }
 
 // Only run when executed directly. Test harnesses can `import { runDaemon }`

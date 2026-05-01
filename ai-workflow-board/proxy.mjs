@@ -29,6 +29,7 @@ import {
 } from './lib/constants.mjs';
 import { log, send, sendError } from './lib/logging.mjs';
 import { loadConfig, resolveAgentId } from './lib/config.mjs';
+import { acquireAgentLock, inspectAgentLock } from './lib/agent-lockfile.mjs';
 import { fetchTicketContext, fetchChatRoomHistory } from './lib/rest.mjs';
 import {
   composeTriggerPrompt,
@@ -118,8 +119,44 @@ function runUnconfigured(rl) {
   });
 }
 
+/**
+ * Refuse to start a second SSE owner — daemon already holds the channel
+ * lockfile. We respond to MCP handshake with empty tools (so Claude CLI
+ * doesn't keep retrying) and send each subsequent request a clear error
+ * pointing at the lockfile contention. The caller can `AWB_FORCE_LOCK=1` to
+ * take over (rare; used by upgrade scripts).
+ */
+function runLocked(rl, ownerInfo) {
+  const ownerDesc = `pid=${ownerInfo?.pid ?? '?'} role=${ownerInfo?.role ?? '?'}`;
+  log(`Proxy: AWB agent lockfile already held by ${ownerDesc}. Refusing to start.`);
+  log('Proxy: stop the daemon (or set AWB_FORCE_LOCK=1) to let this proxy take over.');
+
+  rl.on('line', (line) => {
+    try {
+      const msg = JSON.parse(line);
+      if (msg.method === 'initialize') {
+        send({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: {
+            protocolVersion: '2025-03-26',
+            capabilities: { tools: {} },
+            serverInfo: { name: 'ai-workflow-board', version: '0.0.0-locked' },
+          },
+        });
+      } else if (msg.method === 'tools/list') {
+        send({ jsonrpc: '2.0', id: msg.id, result: { tools: [] } });
+      } else if (msg.method === 'notifications/initialized') {
+        // no response
+      } else if (msg.id !== undefined) {
+        sendError(msg.id, -32000, `AWB daemon already on this channel (${ownerDesc}). Stop it or set AWB_FORCE_LOCK=1.`);
+      }
+    } catch { /* ignore malformed */ }
+  });
+}
+
 /** Main proxy — bridges stdio MCP to remote AWB server + SSE channel */
-function runProxy(rl, config) {
+function runProxy(rl, config, lock) {
   const mcpUrl = config.url.replace(/\/$/, '') + '/mcp';
   const pluginVersion = readPluginVersion();
   // Phase 2: pick the CLI adapter once at startup. Same instance is shared
@@ -215,10 +252,31 @@ function runProxy(rl, config) {
     try { await chatSessionManager.stop(); } catch (err) { log(`shutdown (chat): ${err.message}`); }
     try { await ticketSessionManager.stop(); } catch (err) { log(`shutdown (ticket): ${err.message}`); }
     try { subagentMonitor.stop(); } catch (err) { log(`shutdown (monitor): ${err.message}`); }
+    // Phase 4: drop the agent lockfile last so a sibling can boot only after
+    // our subagents are gone.
+    try { lock?.release(); } catch (err) { log(`shutdown (lockfile): ${err.message}`); }
     process.exit(0);
   };
   process.once('SIGTERM', () => shutdownHandler('SIGTERM'));
   process.once('SIGINT', () => shutdownHandler('SIGINT'));
+
+  // Phase 4: SIGHUP — re-read config.json + apply non-disruptive changes.
+  // Server URL / apiKey changes still need a Claude-CLI restart (this proxy
+  // is bound to the URL it opened) so we just log a notice in that case.
+  process.on('SIGHUP', () => {
+    const next = loadConfig();
+    if (!next?.url || !next?.apiKey) {
+      log('SIGHUP: config.json missing or unparseable — keeping previous config');
+      return;
+    }
+    const disruptive = next.url !== config.url || next.apiKey !== config.apiKey;
+    Object.assign(config, next);
+    log(
+      `SIGHUP: config reloaded (delegation.maxConcurrent=${config.delegation.maxConcurrent} ` +
+      `ttl=${config.delegation.ttlMinutes}min idle=${config.delegation.idleMinutes}min)` +
+      (disruptive ? ' — server/apiKey changes need a proxy restart' : ''),
+    );
+  });
 
   rl.on('line', async (line) => {
     // DIAG v0.6.9: log EVERY inbound line — truncated — so we can see what (if anything)
@@ -336,7 +394,23 @@ if (isDirectExecution) {
   if (!config?.url || !config?.apiKey) {
     runUnconfigured(rl);
   } else {
-    runProxy(rl, config);
+    // Phase 4: acquire the channel lockfile. AWB_FORCE_LOCK=1 in the env (set
+    // by upgrade tooling) overrides a live owner. On EAGENTLOCKED we run the
+    // degraded `runLocked` loop so Claude CLI gets a clean error instead of
+    // a vanished MCP server, but we do NOT spin up SSE / subagents.
+    const force = String(process.env.AWB_FORCE_LOCK || '') === '1';
+    let lock;
+    try {
+      lock = acquireAgentLock({ role: 'proxy', version: '0.0.0', force });
+    } catch (err) {
+      if (err.code === 'EAGENTLOCKED') {
+        runLocked(rl, inspectAgentLock());
+      } else {
+        log(`Proxy fatal: ${err?.stack || err?.message || err}`);
+        process.exit(1);
+      }
+    }
+    if (lock) runProxy(rl, config, lock);
   }
 }
 
