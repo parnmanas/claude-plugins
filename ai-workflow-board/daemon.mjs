@@ -43,6 +43,7 @@ import { log } from './lib/logging.mjs';
 import { acquireAgentLock } from './lib/agent-lockfile.mjs';
 import { runSelfUpdate } from './lib/self-update.mjs';
 import { PresenceHeartbeat } from './lib/presence-heartbeat.mjs';
+import { InstanceHeartbeat } from './lib/instance-heartbeat.mjs';
 import { EventStream } from './lib/event-stream.mjs';
 import { SubagentManager } from './lib/subagent-manager.mjs';
 import { ChatSessionManager } from './lib/chat-session-manager.mjs';
@@ -52,7 +53,7 @@ import { onFlushThreshold } from './lib/event-log-recorder.mjs';
 import { cleanupOrphanSubagents } from './lib/orphan-cleanup.mjs';
 import { FsBrowser } from './lib/fs-browser.mjs';
 import { SubagentMonitor } from './lib/subagent-monitor.mjs';
-import { createAdapter, ADAPTER_CAPABILITIES } from './lib/cli-adapters/index.mjs';
+import { createAdapter, ADAPTER_CAPABILITIES, KNOWN_CLI_TYPES } from './lib/cli-adapters/index.mjs';
 
 // Plugin version is read at runtime from plugin.json so the daemon and the
 // proxy never drift out of sync with the actual installed version. We do
@@ -127,6 +128,12 @@ async function runDaemon(argv = process.argv.slice(2)) {
     presenceHeartbeat._real?.pingNow().catch(() => { /* logged inside pingNow */ });
   };
 
+  // Phase 3 instance heartbeat — separate per-process registry so the admin
+  // dashboard can list every daemon/proxy without collapsing them onto a
+  // single Agent row. Constructed once agent_id resolves; the daemon runs
+  // exactly one of these per process.
+  const instanceHeartbeat = { _real: null };
+
   // Reap orphan subagents from previous daemon / proxy generations on this host.
   // Sibling-proxy protection (orphan-cleanup.mjs) reads /proc/*/cmdline so live
   // children of any other plugin instance are NOT killed — only genuine orphans.
@@ -179,6 +186,7 @@ async function runDaemon(argv = process.argv.slice(2)) {
   const shutdown = async (signal) => {
     log(`Daemon received ${signal} — terminating subagents`);
     presenceHeartbeat._real?.stop();
+    instanceHeartbeat._real?.stop();
     if (uploadTimer) { clearInterval(uploadTimer); uploadTimer = null; }
     eventStream?.stop();
     try { await subagentManager.stop(); } catch (err) { log(`shutdown: ${err.message}`); }
@@ -267,6 +275,13 @@ async function runDaemon(argv = process.argv.slice(2)) {
     if (!agentId) return;
     presenceHeartbeat._real = new PresenceHeartbeat(config, agentId);
     presenceHeartbeat._real.start();
+    instanceHeartbeat._real = new InstanceHeartbeat(config, agentId, {
+      mode: 'daemon',
+      version,
+      cli: adapter.cliType,
+      cliAdapters: KNOWN_CLI_TYPES,
+    });
+    instanceHeartbeat._real.start();
     const fireUpload = () => uploadIfNewErrors(config, agentId, version).catch(() => {});
     fireUpload();
     uploadTimer = setInterval(fireUpload, 30 * 1000);

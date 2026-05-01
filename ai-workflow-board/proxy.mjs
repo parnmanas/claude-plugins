@@ -37,6 +37,7 @@ import {
   composeChatRoomPrompt,
 } from './lib/prompts.mjs';
 import { PresenceHeartbeat } from './lib/presence-heartbeat.mjs';
+import { InstanceHeartbeat } from './lib/instance-heartbeat.mjs';
 import { McpForwardSession } from './lib/mcp-forward-session.mjs';
 import { EventStream } from './lib/event-stream.mjs';
 import { SubagentManager } from './lib/subagent-manager.mjs';
@@ -47,7 +48,7 @@ import { onFlushThreshold } from './lib/event-log-recorder.mjs';
 import { cleanupOrphanSubagents } from './lib/orphan-cleanup.mjs';
 import { FsBrowser } from './lib/fs-browser.mjs';
 import { SubagentMonitor } from './lib/subagent-monitor.mjs';
-import { createAdapter } from './lib/cli-adapters/index.mjs';
+import { createAdapter, KNOWN_CLI_TYPES } from './lib/cli-adapters/index.mjs';
 
 // Plugin version is read from plugin.json at boot so proxy and daemon never
 // drift away from the installed version. Lazy + try/catch so a malformed
@@ -179,6 +180,11 @@ function runProxy(rl, config, lock) {
     presenceHeartbeat._real?.pingNow().catch(() => { /* logged inside pingNow */ });
   };
 
+  // Phase 3 instance heartbeat — separate per-process registry so the admin
+  // dashboard can list every daemon/proxy without collapsing them onto a
+  // single Agent row.
+  const instanceHeartbeat = { _real: null };
+
   const forwardSession = new McpForwardSession(mcpUrl, config.apiKey, kickPresencePing);
   let eventStream = null;
   let uploadTimer = null;
@@ -245,6 +251,7 @@ function runProxy(rl, config, lock) {
   const shutdownHandler = async (signal) => {
     log(`Proxy received ${signal} — terminating subagents`);
     presenceHeartbeat._real?.stop();
+    instanceHeartbeat._real?.stop();
     forwardSession.stop();
     if (uploadTimer) { clearInterval(uploadTimer); uploadTimer = null; }
     eventStream?.stop();
@@ -318,6 +325,13 @@ function runProxy(rl, config, lock) {
         agentIdReady.then((agentId) => {
           presenceHeartbeat._real = new PresenceHeartbeat(config, agentId);
           presenceHeartbeat._real.start();
+          instanceHeartbeat._real = new InstanceHeartbeat(config, agentId, {
+            mode: 'proxy',
+            version: pluginVersion,
+            cli: adapter.cliType,
+            cliAdapters: KNOWN_CLI_TYPES,
+          });
+          instanceHeartbeat._real.start();
           // v0.26.0: ticket-poller removed. Server-side TicketSupervisorService
           // re-pushes agent_trigger for stale allocations (my_last_update_at
           // past 30 min), with force_respawn escalation after 5 min cooldown.
