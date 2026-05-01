@@ -179,10 +179,38 @@ What's missing vs the proxy:
 Concurrent run with `proxy.mjs`: discouraged but not forbidden. The AWB server pins agent-targeted events (`agent_trigger`, `chat_request`, `chat_room_message`, `comment_mention`, `fs_request`) to one main SSE session per agent, so most events go to one path. Broadcast events still fan out to both. A future phase will add a lockfile to make the two mutually exclusive.
 
 Phase scope (ticket f338f6a5):
-- Phase 1 (this version): daemon entrypoint with claude-CLI subagent parity.
-- Phase 2: per-CLI adapter abstraction (gemini, codex, …).
+- Phase 1 (v0.36.0): daemon entrypoint with claude-CLI subagent parity.
+- Phase 2 (v0.37.0): per-CLI adapter abstraction (claude, gemini).
 - Phase 3: AWB server / web UI control surface for daemons.
 - Phase 4: lockfile, daemon self-update, per-agent config UI.
+
+## CLI Adapter (v0.37.0+)
+
+The proxy and daemon spawn one of several CLIs per process based on `config.cli` in `~/.claude/channels/<channel>/config.json`:
+
+```json
+{
+  "url": "...",
+  "apiKey": "...",
+  "cli": "claude"
+}
+```
+
+| Value | Capabilities | Notes |
+|-------|-------------|-------|
+| `claude` (default) | persistent sessions, native MCP | Behavior unchanged from v0.36.0 — argv, stream-json formatting, mcp-config tempfile shape are all identical. |
+| `gemini` | one-shot only | No persistent sessions: every trigger spawns a fresh `gemini` process. No native MCP: the daemon collects gemini's stdout and posts the answer as an `add_comment` MCP tool call back to AWB on its own connection. |
+
+To run two CLIs side-by-side on one host, register two AWB agents with two channels (e.g. `~/.claude/channels/awb-claude/` and `~/.claude/channels/awb-gemini/`) and run one daemon per channel. They share orphan-cleanup safety the same way two daemons of the same CLI do (sibling-aware `/proc/*/cmdline` scan).
+
+Adapter contract (`lib/cli-adapters/base.mjs`):
+- `resolveBin(configured)` — absolute path lookup; cached per CLI in `lib/cli-resolver.mjs` (Windows = `.exe` only).
+- `buildOneshotSpawn({rolePrompt, taskText, mcpConfigPath})` — argv + stdio + optional `writePrompt(child)` hook for stdin-prompted CLIs.
+- `buildSessionSpawn(...)` — persistent session argv (throws on `gemini`).
+- `formatTurn(text)` / `parseStdoutLine(line)` — wire formatting + line parsing for persistent sessions.
+- `collectOneshotResult(lines)` — assembles an answer text for adapters without `NATIVE_MCP`. `SubagentManager` then posts that text via `add_comment`.
+
+Adding a new CLI: drop a new `lib/cli-adapters/<name>.mjs` exporting a class extending `CliAdapter`, register it in `lib/cli-adapters/index.mjs`, add candidate paths to `CANDIDATE_PROVIDERS` in `lib/cli-resolver.mjs`, and add the value to `KNOWN_CLI_TYPES` in `lib/config.mjs` so a typo logs a warning.
 
 ## Related
 

@@ -26,13 +26,13 @@ export class ChatSessionManager extends BaseSessionManager {
   #historyRing = new Map();      // roomId → ChatRoomMessagePayload[] (max 30)
   #HISTORY_MAX = 30;
 
-  constructor(config) {
+  constructor(config, adapter) {
     super(config, {
       keyField: 'roomId',
       logTag: '[chat-session]',
       cfgPrefix: 'cfg-chat-',
       kindLabel: 'chat_session',
-    });
+    }, adapter);
   }
 
   /** Called from SSE reader for every chat_room_message we see — warms the ring. */

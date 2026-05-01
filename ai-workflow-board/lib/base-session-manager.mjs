@@ -1,23 +1,25 @@
 // ─── Base Session Manager ─────────────────────────────────
-// Shared lifecycle skeleton for persistent per-key Claude CLI children.
+// Shared lifecycle skeleton for persistent per-key CLI children.
 // ChatSessionManager (key = roomId) and TicketSessionManager (key = ticketId)
 // both extend this class.
 //
+// Phase 2: parameterized by a CliAdapter. The adapter contributes the bits
+// that vary across CLIs (argv shape, stream-json formatting, line parsing).
+// Sessions are only available when the adapter declares PERSISTENT_SESSION;
+// _spawnSession() refuses to spawn for stateless adapters (gemini, …) so
+// the manager can fail fast instead of leaving a half-broken child running.
+//
 // The base class owns:
 //   - the #sessions Map, cap enforcement + LRU eviction
-//   - spawn (mcp-config creation, CLI args, child.spawn, wireStdio/wireExit)
+//   - spawn (mcp-config creation, CLI args via adapter, child.spawn, wireStdio/wireExit)
 //   - writeTurn / resetIdleTimer / maxTurns respawn trigger
 //   - bounded dedup set+queue helpers
 //   - graceful stop() (SIGTERM → grace → SIGKILL)
 //
 // Subclasses customise per-kind behaviour via:
 //   - constructor options { keyField, logTag, cfgPrefix, kindLabel }
-//   - their own dispatch*() public methods that call this.spawnSession()
-//     and this.writeTurnToSession() after composing the turn text.
-//
-// There is no ECMA "protected"; members that subclasses may touch are exposed
-// as regular (non-#) methods prefixed with `_` and documented here. Private
-// state stays behind `#`.
+//   - their own dispatch*() public methods that call this._spawnSession()
+//     and this._sendFollowUp() after composing the turn text.
 
 import { promises as fsp } from 'fs';
 import { join, dirname } from 'path';
@@ -25,9 +27,12 @@ import { createInterface } from 'readline';
 import { spawn } from 'child_process';
 import { SUBAGENTS_BASE_DIR, STOP_GRACE_MS } from './constants.mjs';
 import { log } from './logging.mjs';
-import { resolveClaudeBin } from './claude-bin-resolver.mjs';
+import { ClaudeCliAdapter } from './cli-adapters/claude.mjs';
+import { ADAPTER_CAPABILITIES, PARSE_STAGE } from './cli-adapters/base.mjs';
 
-// Health watchdog. A session is "responding" when stream-json emits a
+const { PERSISTENT_SESSION } = ADAPTER_CAPABILITIES;
+
+// Health watchdog. A session is "responding" when the adapter reports a
 // `result` line for each turn we wrote. If the LLM goes silent — Claude
 // account hit a rate-limit ceiling, network deadlock, child wedged on a
 // blocking syscall, etc. — turns stack on stdin without acks and the
@@ -36,26 +41,26 @@ import { resolveClaudeBin } from './claude-bin-resolver.mjs';
 // Two thresholds, OR'd together:
 //   - 5 turns dispatched without seeing a single `result` line back
 //   - 30 minutes elapsed since the first unresponded turn was written
-// On either, the child is SIGTERM'd (then SIGKILL'd after the same
-// grace window stop() uses) and the session removed from #sessions so
-// the next trigger that arrives spawns a fresh subagent.
 const UNHEALTHY_TURN_THRESHOLD = 5;
 const UNHEALTHY_DURATION_MS = 30 * 60 * 1000;
 const HEALTH_SWEEP_INTERVAL_MS = 60 * 1000;
 
 export class BaseSessionManager {
   #config;
-  #sessions = new Map();           // sessionKey → session record
+  #adapter;
+  #sessions = new Map();
   #dedupSet = new Set();
   #dedupQueue = [];
   #DEDUP_MAX = 200;
   #healthTimer = null;
 
   // Subclass-injected descriptors, set in constructor.
-  #keyField;    // e.g. 'roomId' | 'ticketId' — field name on session records
-  #logTag;      // e.g. '[chat-session]' | '[ticket-session]' — prefix for internal logs
-  #cfgPrefix;   // e.g. 'cfg-chat-' | 'cfg-ticket-' — mcp-config tempfile name prefix
-  #kindLabel;   // e.g. 'chat_session' | 'ticket_session' — spawn log kind=
+  #keyField;
+  #logTag;
+  #cfgPrefix;
+  #kindLabel;
+
+  #monitor = null;
 
   /**
    * @param {object} config delegation config (config.delegation.*)
@@ -64,17 +69,15 @@ export class BaseSessionManager {
    * @param {string} options.logTag     log-line prefix ('[chat-session]' | '[ticket-session]')
    * @param {string} options.cfgPrefix  mcp-config tempfile prefix ('cfg-chat-' | 'cfg-ticket-')
    * @param {string} options.kindLabel  spawn-log kind value ('chat_session' | 'ticket_session')
+   * @param {import('./cli-adapters/base.mjs').CliAdapter} [adapter] CLI adapter; default = claude
    */
-  // v0.32: monitor injected post-construction so the proxy can wire it after
-  // resolving the agent's workspace_id. No-op tap until set.
-  #monitor = null;
-
-  constructor(config, options) {
+  constructor(config, options, adapter) {
     this.#config = config;
     this.#keyField = options.keyField;
     this.#logTag = options.logTag;
     this.#cfgPrefix = options.cfgPrefix;
     this.#kindLabel = options.kindLabel;
+    this.#adapter = adapter || new ClaudeCliAdapter();
   }
 
   setMonitor(monitor) { this.#monitor = monitor; }
@@ -82,6 +85,7 @@ export class BaseSessionManager {
   // ─── Read-only accessors for subclasses ────────────────────────
   get _config() { return this.#config; }
   get _sessions() { return this.#sessions; }
+  get _adapter() { return this.#adapter; }
 
   /** Return the live session for a key, or undefined. */
   _getSession(sessionKey) {
@@ -99,105 +103,91 @@ export class BaseSessionManager {
   }
 
   /**
-   * Spawn a new Claude CLI child bound to `sessionKey`. Seeds it with
+   * Spawn a new persistent CLI child bound to `sessionKey`. Seeds it with
    * `firstTurnText`. Registers the session on success and returns the record.
-   * Returns null on spawn failure (caller decides what to do).
-   *
-   * `options.onProgress(stage)` is invoked as the subagent advances through
-   * the turn:
-   *   - 'thinking'  — first stdout line received (subagent has the message)
-   *   - 'composing' — first assistant content emitted (writing the reply)
-   * It is also re-invoked every 10s with the latest stage so callers can
-   * refresh client-side typing indicators that auto-expire.
+   * Returns null on spawn failure or when the adapter doesn't support
+   * persistent sessions (caller decides what to do — typically fall through
+   * to a one-shot SubagentManager.spawn).
    */
   async _spawnSession(sessionKey, rolePrompt, firstTurnText, { onProgress, monitorMeta } = {}) {
+    if (!this.#adapter.has(PERSISTENT_SESSION)) {
+      log(`${this.#logTag} adapter cli=${this.#adapter.cliType} does not support persistent sessions; refusing to spawn`);
+      return null;
+    }
+
     let configPath = null;
+    let pidPath = null;
     try {
-      configPath = join(
-        SUBAGENTS_BASE_DIR,
-        `${this.#cfgPrefix}${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-      );
-      await fsp.mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
-      // X-AWB-Client-Type: subagent bypasses the server's proxy schemaVersion
-      // gate (mcp.controller.ts) — same as SubagentManager. Persistent ticket /
-      // chat sessions spawn the Claude CLI directly (no proxy.mjs in the path),
-      // so without this header the server rejects initialize with -32000
-      // "proxy schemaVersion mismatch" and no mcp__awb__* tools register.
-      //
-      // X-AWB-Subagent-Role / X-AWB-Subagent-Ticket-Id pin the role context
-      // for ticket-session subagents so the server can attribute comments,
-      // current_task, etc. to the correct role without each tool call having
-      // to carry the role explicitly. Set only when the subclass supplies
-      // monitorMeta with role/ticketId — chat sessions and oneshots leave the
-      // headers off, and the server treats their absence as "no pinned role".
-      const headers = {
-        Authorization: `Bearer ${this.#config.apiKey}`,
-        'X-AWB-Client-Type': 'subagent',
-      };
-      if (monitorMeta?.ticket_id) headers['X-AWB-Subagent-Ticket-Id'] = monitorMeta.ticket_id;
-      if (monitorMeta?.role) headers['X-AWB-Subagent-Role'] = monitorMeta.role;
-      const mcpConfig = {
-        mcpServers: {
-          awb: {
-            type: 'http',
-            url: `${this.#config.url.replace(/\/$/, '')}/mcp`,
-            headers,
+      // Build the spawn descriptor first so we know whether mcp-config is
+      // needed before writing tempfiles. (For claude this is always true;
+      // future adapters may opt out.)
+      let descriptor = this.#adapter.buildSessionSpawn({
+        rolePrompt: rolePrompt || '',
+        mcpConfigPath: null,
+      });
+
+      if (descriptor.needsMcpConfig) {
+        configPath = join(
+          SUBAGENTS_BASE_DIR,
+          `${this.#cfgPrefix}${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+        );
+        await fsp.mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
+        // X-AWB-Client-Type: subagent bypasses the server's proxy
+        // schemaVersion gate. X-AWB-Subagent-Role / X-AWB-Subagent-Ticket-Id
+        // pin the role context for ticket-session subagents.
+        const headers = {
+          Authorization: `Bearer ${this.#config.apiKey}`,
+          'X-AWB-Client-Type': 'subagent',
+        };
+        if (monitorMeta?.ticket_id) headers['X-AWB-Subagent-Ticket-Id'] = monitorMeta.ticket_id;
+        if (monitorMeta?.role) headers['X-AWB-Subagent-Role'] = monitorMeta.role;
+        const mcpConfig = {
+          mcpServers: {
+            awb: {
+              type: 'http',
+              url: `${this.#config.url.replace(/\/$/, '')}/mcp`,
+              headers,
+            },
           },
-        },
-      };
-      await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
+        };
+        await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 
-      // Pid sidecar — written AFTER spawn so it reflects the real child pid.
-      // Used by cleanupOrphanSubagents() on proxy startup to reap survivors
-      // of a hard proxy crash (SIGKILL / OS reboot / host process vanish).
-      // Without a sidecar we'd have no way to tie a leftover cfg file back
-      // to a pid, and `detached: true` + `unref()` means these children
-      // survive the proxy's death.
-      const pidPath = configPath.replace(/\.json$/, '.pid');
+        // Re-build with the real path. Adapter buildSessionSpawn is pure.
+        descriptor = this.#adapter.buildSessionSpawn({
+          rolePrompt: rolePrompt || '',
+          mcpConfigPath: configPath,
+        });
+      }
 
-      const args = [
-        '--verbose',
-        '--input-format', 'stream-json',
-        '--output-format', 'stream-json',
-        '--mcp-config', configPath,
-        '--strict-mcp-config',
-        '--allowedTools', 'mcp__awb__*',
-        '--append-system-prompt', rolePrompt || '',
-        '--dangerously-skip-permissions',
-      ];
-      const resolvedBin = resolveClaudeBin(this.#config.delegation.claudeBin);
-      const child = spawn(resolvedBin, args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
+      const resolvedBin = this.#adapter.resolveBin(this.#config.delegation.claudeBin);
+      const child = spawn(resolvedBin, descriptor.args, {
+        stdio: descriptor.stdio || ['pipe', 'pipe', 'pipe'],
         detached: true,
-        // v0.32: Windows console-window spam fix — without this, every spawned
-        // claude.exe (and each Bash subprocess it launches) flashes a console
-        // window even though stdio is already piped to the proxy.
         windowsHide: true,
         env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
-        // Only .cmd/.bat/.ps1 wrappers need cmd.exe; native .exe spawns direct.
-        shell: /\.(cmd|bat|ps1)$/i.test(resolvedBin),
+        shell: descriptor.shell ?? /\.(cmd|bat|ps1)$/i.test(resolvedBin),
       });
-      // CRITICAL: attach 'error' listener synchronously BEFORE the pid check
-      // below. spawn() emits 'error' async on ENOENT; without a listener the
-      // event becomes an uncaughtException that corrupts proxy state.
-      // #wireExit attaches another 'error' handler later but only when the
-      // spawn succeeded — this early listener covers the failure branch.
       child.once('error', (err) => {
-        log(`${this.#logTag} spawn error: code=${err.code || ''} bin=${resolvedBin} msg=${err.message}`);
+        log(`${this.#logTag} spawn error: code=${err.code || ''} cli=${this.#adapter.cliType} bin=${resolvedBin} msg=${err.message}`);
       });
       child.unref();
 
       if (!child.pid) {
-        await fsp.unlink(configPath).catch(() => {});
+        if (configPath) await fsp.unlink(configPath).catch(() => {});
         return null;
       }
-      // Best-effort: if this write fails we simply lose the orphan-cleanup
-      // safety net for THIS subagent, nothing worse.
-      await fsp.writeFile(pidPath, String(child.pid), { mode: 0o600 }).catch(() => {});
+      // Pid sidecar — used by orphan-cleanup on restart to reap survivors
+      // of a hard crash. Only meaningful when the adapter wrote an mcp-config
+      // (the cleanup keys off cfg path); otherwise skip.
+      if (configPath) {
+        pidPath = configPath.replace(/\.json$/, '.pid');
+        await fsp.writeFile(pidPath, String(child.pid), { mode: 0o600 }).catch(() => {});
+      }
 
       const sess = {
         [this.#keyField]: sessionKey,
         pid: child.pid,
+        cli_type: this.#adapter.cliType,
         child,
         configPath,
         pidPath,
@@ -205,18 +195,10 @@ export class BaseSessionManager {
         startedAt: Date.now(),
         lastTouchedAt: Date.now(),
         idleTimer: null,
-        // Health watchdog state. Bumped by _writeTurn, reset on each
-        // `result` line in #advanceTurn, swept by #healthSweep.
         unrespondedTurnCount: 0,
         unrespondedSince: null,
         unhealthyKilled: false,
       };
-      // v0.32: register with the subagent monitor (no-op when monitor unset
-      // or disabled). Tap stays on the session record so wireStdio/writeTurn/
-      // wireExit can route lines through it.
-      // monitorMeta carries ticket+role for ticket-session subagents so the
-      // server-side dashboard can render "Ticket title · reviewer" instead
-      // of an opaque session key. chat/oneshot subclasses pass nothing.
       sess.tap = this.#monitor?.register({
         kind: this.#kindLabel === 'chat_session' ? 'chat' : (this.#kindLabel === 'ticket_session' ? 'ticket' : 'oneshot'),
         sessionKey,
@@ -228,7 +210,7 @@ export class BaseSessionManager {
       this.#wireStdio(sess);
       this.#wireExit(sess);
 
-      log(`Subagent spawned: pid=${sess.pid} kind=${this.#kindLabel} ${this.#keyField}=${sessionKey}`);
+      log(`Subagent spawned: pid=${sess.pid} cli=${this.#adapter.cliType} kind=${this.#kindLabel} ${this.#keyField}=${sessionKey}`);
 
       this.#startTurn(sess, onProgress);
       this._writeTurn(sess, firstTurnText);
@@ -244,16 +226,6 @@ export class BaseSessionManager {
     }
   }
 
-  /**
-   * Stream one user turn into an existing session's stdin, bump bookkeeping
-   * counters, and (when checkMaxTurns is true) trigger stdin.end() once the
-   * turn budget is exhausted. Callers handle dedup + the kind-specific turn
-   * text composition before invoking this.
-   *
-   * `checkMaxTurns` defaults to true (the common case: fresh user/trigger
-   * turn). Pass false for passive notifications (e.g. ticket board_update
-   * forwards) that should not cause a respawn.
-   */
   _sendFollowUp(sess, turnText, { checkMaxTurns = true, onProgress } = {}) {
     this.#startTurn(sess, onProgress);
     this._writeTurn(sess, turnText);
@@ -269,12 +241,6 @@ export class BaseSessionManager {
   }
 
   // ─── Turn progress (drives client typing indicators) ───────────
-  // A "turn" is one user message → subagent → response cycle. The base class
-  // tracks the in-flight turn so it can fire onProgress callbacks when the
-  // subagent acknowledges the input ('thinking') and starts producing
-  // assistant content ('composing'). A 10s heartbeat re-fires the latest
-  // stage so client-side typing indicators (which self-expire after ~15s)
-  // stay visible across long subagent runs.
 
   #startTurn(sess, onProgress) {
     this.#endTurn(sess);
@@ -303,34 +269,30 @@ export class BaseSessionManager {
     sess._currentTurn = null;
   }
 
-  #advanceTurn(sess, parsedLine) {
+  #advanceTurn(sess, parsed) {
     const turn = sess._currentTurn;
     if (!turn) return;
-    if (!turn.fired.thinking) {
+    if (!turn.fired.thinking && parsed.stage) {
       turn.fired.thinking = true;
-      turn.stage = 'thinking';
-      try { turn.onProgress('thinking'); } catch (err) {
+      turn.stage = PARSE_STAGE.THINKING;
+      try { turn.onProgress(PARSE_STAGE.THINKING); } catch (err) {
         log(`${this.#logTag} onProgress(thinking) error: ${err.message}`);
       }
     }
-    if (!turn.fired.composing && parsedLine?.type === 'assistant') {
+    if (!turn.fired.composing && parsed.stage === PARSE_STAGE.COMPOSING) {
       turn.fired.composing = true;
-      turn.stage = 'composing';
-      try { turn.onProgress('composing'); } catch (err) {
+      turn.stage = PARSE_STAGE.COMPOSING;
+      try { turn.onProgress(PARSE_STAGE.COMPOSING); } catch (err) {
         log(`${this.#logTag} onProgress(composing) error: ${err.message}`);
       }
     }
-    if (parsedLine?.type === 'result') {
+    if (parsed.isResult) {
       // Health watchdog: a result line means the LLM pipeline answered the
       // turn. Whether the result is success or error doesn't matter here —
-      // the child is alive and round-tripping. Clear the unresponded counters
-      // so the next stretch of silence is measured from now.
+      // the child is alive and round-tripping.
       sess.unrespondedTurnCount = 0;
       sess.unrespondedSince = null;
-      // Per-session hook: subclasses use this to ack triggers ONLY when the
-      // turn actually completed (so silent / errored exits remain
-      // unacknowledged and the poller can retry them).
-      try { sess.onResult?.(parsedLine); } catch (err) {
+      try { sess.onResult?.(parsed.raw); } catch (err) {
         log(`${this.#logTag} onResult error: ${err.message}`);
       }
       this.#endTurn(sess);
@@ -338,18 +300,10 @@ export class BaseSessionManager {
   }
 
   _writeTurn(sess, text) {
-    const obj = {
-      type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text: String(text) }] },
-    };
-    const wire = JSON.stringify(obj);
+    const wire = this.#adapter.formatTurn(String(text));
     try {
       sess.child.stdin.write(wire + '\n');
       sess.tap?.inLine(wire);
-      // Health watchdog: count turns that haven't seen a `result` line yet.
-      // The next #advanceTurn(result=...) clears both fields. If we hit the
-      // turn-count or duration threshold, #killUnhealthy() takes the session
-      // out — see UNHEALTHY_* constants at the top of the file.
       sess.unrespondedTurnCount = (sess.unrespondedTurnCount || 0) + 1;
       if (!sess.unrespondedSince) sess.unrespondedSince = Date.now();
       log(`${this.#logTag} dispatched turn ${this.#keyField}=${sess[this.#keyField]} pid=${sess.pid} turn=${sess.turnCount + 1} bytes=${Buffer.byteLength(text)}`);
@@ -370,14 +324,13 @@ export class BaseSessionManager {
       const rlOut = createInterface({ input: sess.child.stdout });
       const tag = this.#logTag.replace(/^\[|\]$/g, '');
       rlOut.on('line', (line) => {
-        // stream-json: one JSON object per line. First line of a turn drives
-        // the 'thinking' progress fire; first assistant line drives 'composing'.
         sess.tap?.outLine(line);
-        let obj = null;
-        try { obj = JSON.parse(line); } catch { /* non-JSON; skip */ }
-        this.#advanceTurn(sess, obj);
-        if (obj?.type === 'result') {
-          log(`[${tag}:${sess.pid}] result subtype=${obj.subtype || '-'} is_error=${obj.is_error ?? '-'}`);
+        const parsed = this.#adapter.parseStdoutLine(line);
+        this.#advanceTurn(sess, parsed);
+        if (parsed.isResult) {
+          const subtype = parsed.raw?.subtype || '-';
+          const isError = parsed.isError === true ? 'true' : (parsed.raw?.is_error ?? '-');
+          log(`[${tag}:${sess.pid}] result subtype=${subtype} is_error=${isError}`);
         }
       });
     }
@@ -417,11 +370,6 @@ export class BaseSessionManager {
     if (typeof sess.idleTimer.unref === 'function') sess.idleTimer.unref();
   }
 
-  /**
-   * Lazily start a single sweep timer the first time any session is spawned.
-   * Idempotent. The timer scans every session for the duration-based
-   * unhealthy condition (turn-count side fires inline from _writeTurn).
-   */
   #ensureHealthSweep() {
     if (this.#healthTimer) return;
     this.#healthTimer = setInterval(() => this.#healthSweep(), HEALTH_SWEEP_INTERVAL_MS);
@@ -443,16 +391,6 @@ export class BaseSessionManager {
     }
   }
 
-  /**
-   * Force-kill a session that the watchdog has declared dead in the water.
-   * Removes from #sessions immediately so the next dispatch for the same key
-   * spawns a fresh subagent instead of finding this corpse; SIGTERM with the
-   * stop-grace window, then SIGKILL. The existing #wireExit handler runs
-   * later and finishes cleanup (cfgPath/pidPath unlink, tap.end(), monitor
-   * cleanup) — its `if (this.#sessions.get(key) === sess)` guard makes the
-   * delete-from-map step a no-op the second time around. Idempotent on
-   * sess.unhealthyKilled.
-   */
   #killUnhealthy(sess, reason) {
     if (sess.unhealthyKilled) return;
     sess.unhealthyKilled = true;
@@ -494,13 +432,6 @@ export class BaseSessionManager {
     return true;
   }
 
-  /**
-   * Drop a previously-remembered key so the same trigger/message can be
-   * dispatched again. Subclasses call this from session exit handlers — once
-   * the subagent for a key is gone, any unacknowledged triggers it carried
-   * must become re-dispatchable, otherwise the poller's retry path is dead
-   * for that trigger forever.
-   */
   _forgetDedup(key) {
     if (!this.#dedupSet.delete(key)) return;
     const idx = this.#dedupQueue.indexOf(key);

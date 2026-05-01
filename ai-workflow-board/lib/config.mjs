@@ -13,6 +13,11 @@ import {
 } from './constants.mjs';
 import { log } from './logging.mjs';
 
+// Phase 2: per-channel CLI selection. Supported values match the adapter
+// factory in lib/cli-adapters/index.mjs — unknown values fall back to
+// 'claude' there so a typo can't lock the daemon out.
+const KNOWN_CLI_TYPES = ['claude', 'gemini'];
+
 export function loadConfig() {
   if (!existsSync(CONFIG_PATH)) return null;
   try {
@@ -21,6 +26,15 @@ export function loadConfig() {
     // compat when the section is absent (existing users see no behavior change in proxy.mjs
     // unless Plan 04-03 consumers go live).
     raw.delegation = { ...DELEGATION_DEFAULTS, ...(raw.delegation || {}) };
+    // Phase 2: normalize `cli` key. Default 'claude'; lower-case + sanity-check.
+    // Unknown values are kept as-is so a future adapter type can be configured
+    // before its code lands; createAdapter() falls back to claude with a log
+    // line so the user notices.
+    const cli = String(raw.cli || 'claude').toLowerCase().trim();
+    raw.cli = cli || 'claude';
+    if (!KNOWN_CLI_TYPES.includes(raw.cli)) {
+      log(`config.cli="${raw.cli}" is not a known CLI; valid values: ${KNOWN_CLI_TYPES.join(', ')}. Falling back at adapter creation.`);
+    }
     return raw;
   } catch {
     return null;

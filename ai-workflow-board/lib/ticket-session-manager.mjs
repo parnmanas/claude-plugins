@@ -28,7 +28,7 @@ import { log } from './logging.mjs';
  *   - CAP:        LRU-evict oldest-idle before spawn
  */
 export class TicketSessionManager extends BaseSessionManager {
-  constructor(config) {
+  constructor(config, adapter) {
     super(config, {
       // Key is now a composite `${ticketId}:${role}`. The base class treats
       // the keyField value as opaque, so we just rename the field and store
@@ -38,7 +38,7 @@ export class TicketSessionManager extends BaseSessionManager {
       logTag: '[ticket-session]',
       cfgPrefix: 'cfg-ticket-',
       kindLabel: 'ticket_session',
-    });
+    }, adapter);
   }
 
   #makeKey(ticketId, role) {

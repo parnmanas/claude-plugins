@@ -19,6 +19,9 @@
  */
 
 import { createInterface } from 'readline';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
 import {
   CHANNEL_INSTRUCTIONS,
@@ -43,6 +46,20 @@ import { onFlushThreshold } from './lib/event-log-recorder.mjs';
 import { cleanupOrphanSubagents } from './lib/orphan-cleanup.mjs';
 import { FsBrowser } from './lib/fs-browser.mjs';
 import { SubagentMonitor } from './lib/subagent-monitor.mjs';
+import { createAdapter } from './lib/cli-adapters/index.mjs';
+
+// Plugin version is read from plugin.json at boot so proxy and daemon never
+// drift away from the installed version. Lazy + try/catch so a malformed
+// plugin.json doesn't stop module load (matters for `node --test` import).
+function readPluginVersion() {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const raw = readFileSync(join(here, '.claude-plugin', 'plugin.json'), 'utf8');
+    return String(JSON.parse(raw).version || '').trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 // ─── MCP Proxy ────────────────────────────────────────────
 //
@@ -104,6 +121,11 @@ function runUnconfigured(rl) {
 /** Main proxy — bridges stdio MCP to remote AWB server + SSE channel */
 function runProxy(rl, config) {
   const mcpUrl = config.url.replace(/\/$/, '') + '/mcp';
+  const pluginVersion = readPluginVersion();
+  // Phase 2: pick the CLI adapter once at startup. Same instance is shared
+  // across SubagentManager + Chat/TicketSessionManager.
+  const adapter = createAdapter(config.cli);
+  log(`Proxy starting (server=${config.url} version=${pluginVersion} cli=${adapter.cliType})`);
 
   // Phase 3 D-52: presence heartbeat. Resolves agent_id from agent.json (or via MCP whoami
   // if null), then pings every 30s so the dashboard keeps this agent marked online.
@@ -138,17 +160,18 @@ function runProxy(rl, config) {
     })
     .catch((err) => log(`Orphan subagent cleanup failed: ${err.message}`));
 
-  // Phase 4 Plan 04-02: instantiate SubagentManager. Plan 04-03 now wires #handleTrigger
+  // Phase 4 Plan 04-02: instantiate SubagentManager. Plan 04-03 wires #handleTrigger
   // and #handleChatRequest consumers + the onExit completion notification below.
-  const subagentManager = new SubagentManager(config);
-  // Fire-and-forget init; log on failure. init() is idempotent and defers TTL sweep to setInterval.
+  // Phase 2: managers receive the per-process CLI adapter so claude / gemini /
+  // future CLIs can share the same lifecycle code.
+  const subagentManager = new SubagentManager(config, adapter);
   subagentManager.init().catch((err) => log(`SubagentManager init failed: ${err.message}`));
 
   // v0.7.0: persistent per-room chat sessions (separate lifecycle from trigger subagents).
-  const chatSessionManager = new ChatSessionManager(config);
+  const chatSessionManager = new ChatSessionManager(config, adapter);
 
   // v0.8.0: persistent per-ticket sessions (trigger + board_update routed to same subagent).
-  const ticketSessionManager = new TicketSessionManager(config);
+  const ticketSessionManager = new TicketSessionManager(config, adapter);
 
   // v0.31.0: file-browser handler. Off unless config.fs_browser.enabled=true
   // AND config.fs_browser.roots has at least one resolvable path. See
@@ -246,7 +269,7 @@ function runProxy(rl, config) {
           // old 10-minute cadence made the feature feel broken even when it
           // worked. Errors still piggyback on the same upload so we don't
           // multiply POSTs.
-          const fireUpload = () => uploadIfNewErrors(config, agentId, '0.26.0').catch(() => {});
+          const fireUpload = () => uploadIfNewErrors(config, agentId, pluginVersion).catch(() => {});
           fireUpload();
           uploadTimer = setInterval(fireUpload, 30 * 1000);
           if (typeof uploadTimer.unref === 'function') uploadTimer.unref();

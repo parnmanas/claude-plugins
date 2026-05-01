@@ -48,6 +48,7 @@ import { onFlushThreshold } from './lib/event-log-recorder.mjs';
 import { cleanupOrphanSubagents } from './lib/orphan-cleanup.mjs';
 import { FsBrowser } from './lib/fs-browser.mjs';
 import { SubagentMonitor } from './lib/subagent-monitor.mjs';
+import { createAdapter, ADAPTER_CAPABILITIES } from './lib/cli-adapters/index.mjs';
 
 // Plugin version is read at runtime from plugin.json so the daemon and the
 // proxy never drift out of sync with the actual installed version. We do
@@ -74,8 +75,13 @@ async function runDaemon() {
     process.exit(1);
   }
   const version = readPluginVersion();
-  log(`AWB Agent Manager starting (server=${config.url} version=${version})`);
-  log(`Delegation: maxConcurrent=${config.delegation.maxConcurrent} ttl=${config.delegation.ttlMinutes}min idle=${config.delegation.idleMinutes}min claudeBin=${config.delegation.claudeBin}`);
+  // Phase 2: pick the CLI adapter once at startup. Same adapter instance is
+  // shared across SubagentManager + Chat/TicketSessionManager so all spawn
+  // sites agree on argv shape and stream parsing.
+  const adapter = createAdapter(config.cli);
+  const persistent = adapter.has(ADAPTER_CAPABILITIES.PERSISTENT_SESSION);
+  log(`AWB Agent Manager starting (server=${config.url} version=${version} cli=${adapter.cliType} persistent_sessions=${persistent})`);
+  log(`Delegation: maxConcurrent=${config.delegation.maxConcurrent} ttl=${config.delegation.ttlMinutes}min idle=${config.delegation.idleMinutes}min cliBin=${config.delegation.claudeBin}`);
 
   // Resolve agent_id from agent.json (or via MCP whoami once). Same path
   // proxy.mjs uses; Presence + monitor wait on this Promise.
@@ -102,11 +108,15 @@ async function runDaemon() {
     })
     .catch((err) => log(`Orphan subagent cleanup failed: ${err.message}`));
 
-  const subagentManager = new SubagentManager(config);
+  const subagentManager = new SubagentManager(config, adapter);
   subagentManager.init().catch((err) => log(`SubagentManager init failed: ${err.message}`));
 
-  const chatSessionManager = new ChatSessionManager(config);
-  const ticketSessionManager = new TicketSessionManager(config);
+  // Persistent session managers only run when the adapter supports them.
+  // For stateless adapters (gemini) we still construct them so the
+  // EventStream interface stays uniform — they'll just decline every spawn
+  // and fall through to one-shot SubagentManager.spawn for triggers.
+  const chatSessionManager = new ChatSessionManager(config, adapter);
+  const ticketSessionManager = new TicketSessionManager(config, adapter);
   const fsBrowser = new FsBrowser(config, config.fs_browser || {});
 
   const subagentMonitor = new SubagentMonitor(config, null);

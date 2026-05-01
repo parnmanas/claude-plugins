@@ -1,4 +1,4 @@
-// ─── Subagent Manager (Phase 4 D-55..D-75) ────────────────
+// ─── Subagent Manager (Phase 4 D-55..D-75 / Phase 2 adapter refactor) ────
 
 import { promises as fsp } from 'fs';
 import { join, dirname } from 'path';
@@ -12,29 +12,38 @@ import {
   STOP_GRACE_MS,
 } from './constants.mjs';
 import { log } from './logging.mjs';
-import { resolveClaudeBin } from './claude-bin-resolver.mjs';
+import { ClaudeCliAdapter } from './cli-adapters/claude.mjs';
+import { ADAPTER_CAPABILITIES } from './cli-adapters/base.mjs';
+import { fireAndForgetTool } from './mcp-client.mjs';
+
+const { NATIVE_MCP } = ADAPTER_CAPABILITIES;
 
 /**
- * Owns the lifecycle of Claude CLI subagent child processes.
+ * Owns the lifecycle of CLI subagent child processes (one-shot trigger / chat).
  *
- * Consumers (Plan 04-03 #handleTrigger and #handleChatRequest) call spawn(spec)
- * with a composed task prompt; the manager handles MCP config file writing, process
- * spawning, PID tracking, stdout/stderr capture, TTL enforcement, persistence, and
- * exit-driven cleanup + completion notification.
+ * Phase 2: parameterized by a CliAdapter. The adapter contributes the bits
+ * that vary across CLIs (argv shape, mcp-config requirement, stream parsing,
+ * one-shot result aggregation). Default = ClaudeCliAdapter so existing
+ * callers and tests that don't pass an adapter continue to work unchanged.
  *
- * This class is behaviorally inert until Plan 04-03 wires consumers — Plan 04-02
- * ships it with no caller, only a node --test suite that injects a fake claudeBin.
+ * For non-MCP adapters (gemini, …) the manager:
+ *   - Skips the per-spawn mcp-config tempfile (adapter.needsMcpConfig=false)
+ *   - Captures stdout lines into the record so the adapter's
+ *     collectOneshotResult() can produce a final answer at exit time
+ *   - Posts that answer back to AWB via the MCP `add_comment` tool when the
+ *     spawn carried a ticketId (the only context where a comment makes sense)
  *
  * Pitfalls guarded:
  *  - Pitfall 1: MCP config file uses {"mcpServers": {...}} wrapper shape
- *  - Pitfall 3: SIGTERM/SIGINT/exit handlers clean up children on proxy shutdown
+ *  - Pitfall 3: SIGTERM/SIGINT/exit handlers clean up children on shutdown
  *  - Pitfall 4: Concurrency cap reserves slot synchronously before async spawn
- *  - Pitfall 6: stdio: ['ignore', 'pipe', 'pipe'] closes child stdin
+ *  - Pitfall 6: stdio: ['ignore', 'pipe', 'pipe'] closes child stdin (claude)
  *  - Pitfall 7: #persist() strips process_handle before JSON.stringify
  */
 export class SubagentManager {
   #map = new Map();              // pid → SubagentRecord, AND reservationId → {kind: 'reservation', ...}
   #config;
+  #adapter;
   #sweepTimer = null;
   #reservationCounter = 0;
   #persistPath;
@@ -42,8 +51,9 @@ export class SubagentManager {
   #initialized = false;
   #monitor = null;               // v0.32: injected by proxy.mjs after agent_id resolution
 
-  constructor(config) {
+  constructor(config, adapter) {
     this.#config = config;
+    this.#adapter = adapter || new ClaudeCliAdapter();
     this.#persistPath = SUBAGENTS_PERSIST_PATH;
     this.#pidDir = SUBAGENTS_BASE_DIR;
   }
@@ -63,25 +73,17 @@ export class SubagentManager {
     await this.#reconcileOnStart();
     await this.#sweepOrphanCfgs();
     this.#sweepTimer = setInterval(() => this.#sweep(), TTL_SWEEP_INTERVAL_MS);
-    // Prevent the sweep timer from keeping the event loop alive past proxy shutdown
     if (typeof this.#sweepTimer.unref === 'function') this.#sweepTimer.unref();
-    log(`SubagentManager initialized (pidDir=${this.#pidDir}, cap=${this.#config.delegation.maxConcurrent}, ttl=${this.#config.delegation.ttlMinutes}min)`);
+    log(`SubagentManager initialized (cli=${this.#adapter.cliType}, pidDir=${this.#pidDir}, cap=${this.#config.delegation.maxConcurrent}, ttl=${this.#config.delegation.ttlMinutes}min)`);
   }
 
+  /** Adapter accessor for tests + external diagnostics. */
+  get adapter() { return this.#adapter; }
+
   /**
-   * Delete cfg-*.json files left behind by dead proxies. v0.24.2: before this
-   * sweep the orphan-subagent design (v0.6.7–v0.24.1) guaranteed that every
-   * proxy that died while children ran left their MCP config files around,
-   * and they accumulated without bound (1000+ files per day observed).
-   *
-   * A cfg file is safe to delete when either:
-   *   - the pid whose spawn created it is no longer alive, OR
-   *   - /proc scan finds no running process with that cfg path on argv
-   *
-   * We intentionally sweep both SubagentManager-owned (cfg-…) and
-   * BaseSessionManager-owned (cfg-ticket-… / cfg-chat-…) files since they
-   * share the same directory and the session managers keep no persistent
-   * state across proxy restarts.
+   * Delete cfg-*.json files left behind by dead proxies. Same logic as before
+   * Phase 2 — only claude-style adapters write cfg files, but the sweep is
+   * keyed off filename prefix so it stays correct in mixed-adapter setups.
    */
   async #sweepOrphanCfgs() {
     let files;
@@ -92,14 +94,10 @@ export class SubagentManager {
       return;
     }
 
-    // Build set of cfg paths still in use by live processes on this host.
     const liveCfgs = new Set();
-    // (1) Records we just reconciled — their pids are alive, keep their cfgs.
     for (const rec of this.#map.values()) {
       if (rec.kind !== 'reservation' && rec.config_path) liveCfgs.add(rec.config_path);
     }
-    // (2) /proc scan — covers orphans from other proxy generations whose
-    // persist entry was overwritten but whose child is still alive.
     try {
       const procEntries = await fsp.readdir('/proc');
       for (const entry of procEntries) {
@@ -126,7 +124,6 @@ export class SubagentManager {
     if (purged > 0) log(`Orphan cfg sweep: purged ${purged} stale config file(s)`);
   }
 
-  /** Count non-reservation records. True if room exists under maxConcurrent. */
   canSpawn() {
     const active = this.#activeCount();
     return active < this.#config.delegation.maxConcurrent;
@@ -144,17 +141,16 @@ export class SubagentManager {
   /**
    * Spawn a subagent. spec = {
    *   kind: 'trigger' | 'chat',
-   *   taskText: string,              // positional prompt passed as the last argv
-   *   rolePrompt: string,            // injected via --append-system-prompt
-   *   triggerId?: string,            // dedup key for trigger kind
-   *   chatRequestId?: string,        // dedup key for chat kind
+   *   taskText: string,              // positional prompt passed as the last argv (claude)
+   *   rolePrompt: string,            // injected via --append-system-prompt (claude)
+   *   triggerId?: string,
+   *   chatRequestId?: string,
    *   ticketId?: string,
    *   agentId?: string,
    * }
    * Returns { spawned: boolean, pid?: number, reason?: string }
    */
   async spawn(spec) {
-    // Dedup by trigger_id (Pitfall 5: SSE reconnect duplicate trigger)
     if (spec.triggerId) {
       for (const rec of this.#map.values()) {
         if (rec.kind !== 'reservation' && rec.trigger_id === spec.triggerId) {
@@ -163,9 +159,6 @@ export class SubagentManager {
       }
     }
 
-    // Strategy B fix: dedup by chatRequestId — prevents double-spawn when chat_request and
-    // chat_room_message both arrive for the same user message and both attempt delegation.
-    // Uses a separate check from triggerId to avoid namespace collisions between the two dedup keys.
     if (spec.chatRequestId) {
       for (const rec of this.#map.values()) {
         if (rec.kind !== 'reservation' && rec.chat_request_id === spec.chatRequestId) {
@@ -174,7 +167,6 @@ export class SubagentManager {
       }
     }
 
-    // Concurrency cap check — synchronous reservation closes Pitfall 4 race
     if (!this.canSpawn()) {
       return { spawned: false, reason: 'cap_reached' };
     }
@@ -183,85 +175,90 @@ export class SubagentManager {
 
     let configPath = null;
     try {
-      // Write per-subagent MCP config file. Pitfall 7 (v0.6.11): the child Claude CLI
-      // reads --mcp-config lazily after spawn returns. We must NOT rename the file
-      // after spawn — the child will fail with "MCP config file not found". Keep the
-      // file at its original path for the child's entire lifetime; cleanup on exit.
-      configPath = join(
-        this.#pidDir,
-        `cfg-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-      );
-      await fsp.mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
+      // Build the spawn descriptor first so we know whether mcp-config is
+      // needed before writing anything to disk.
+      const descriptor = this.#adapter.buildOneshotSpawn({
+        rolePrompt: spec.rolePrompt || '',
+        taskText: spec.taskText,
+        // mcpConfigPath filled in below if needed
+        mcpConfigPath: null,
+      });
 
-      // CRITICAL (Pitfall 1): wrapper shape. Bare {serverName: {...}} is REJECTED.
-      // X-AWB-Client-Type: subagent signals to the server that this session is a
-      // subagent spawning directly via Claude CLI (not through proxy.mjs), so the
-      // server's proxy schemaVersion gate should be skipped. Without this header,
-      // the server rejects initialize with -32000 "proxy schemaVersion mismatch"
-      // and no mcp__awb__* tools register.
-      const mcpConfig = {
-        mcpServers: {
-          awb: {
-            type: 'http',
-            url: `${this.#config.url.replace(/\/$/, '')}/mcp`,
-            headers: {
-              Authorization: `Bearer ${this.#config.apiKey}`,
-              'X-AWB-Client-Type': 'subagent',
+      if (descriptor.needsMcpConfig) {
+        // Pitfall 7 (v0.6.11): the child reads --mcp-config lazily after
+        // spawn returns. We must NOT rename or delete this file until exit.
+        configPath = join(
+          this.#pidDir,
+          `cfg-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+        );
+        await fsp.mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
+
+        // Pitfall 1: wrapper shape. X-AWB-Client-Type: subagent bypasses the
+        // server's proxy schemaVersion gate (claude subagents don't go
+        // through proxy.mjs).
+        const mcpConfig = {
+          mcpServers: {
+            awb: {
+              type: 'http',
+              url: `${this.#config.url.replace(/\/$/, '')}/mcp`,
+              headers: {
+                Authorization: `Bearer ${this.#config.apiKey}`,
+                'X-AWB-Client-Type': 'subagent',
+              },
             },
           },
-        },
-      };
-      await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
+        };
+        await fsp.writeFile(configPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 
-      // Spawn. Pitfall 6: stdio[0]='ignore' closes child stdin.
-      // All argv values are separate array elements — never shell-interpolated.
-      const args = [
-        '--print',
-        '--output-format', 'json',
-        '--mcp-config', configPath,
-        '--strict-mcp-config',
-        '--allowedTools', 'mcp__awb__*',
-        '--append-system-prompt', spec.rolePrompt || '',
-        '--dangerously-skip-permissions',
-        spec.taskText,
-      ];
-      // detached:true puts the child in its own process group so signals aimed
-      // at the proxy's pgrp (SIGHUP from a closing terminal, SIGINT from Ctrl+C
-      // in the parent Claude CLI) don't cascade and kill in-flight work.
-      // TTL sweep and explicit SIGTERM/SIGKILL by pid still work.
-      const resolvedBin = resolveClaudeBin(this.#config.delegation.claudeBin);
-      const child = spawn(resolvedBin, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
+        // Re-build with the real path. The adapter's buildOneshotSpawn is
+        // pure (no side effects), so re-invoking it is safe and cheap.
+        Object.assign(descriptor, this.#adapter.buildOneshotSpawn({
+          rolePrompt: spec.rolePrompt || '',
+          taskText: spec.taskText,
+          mcpConfigPath: configPath,
+        }));
+      }
+
+      const resolvedBin = this.#adapter.resolveBin(this.#config.delegation.claudeBin);
+      const child = spawn(resolvedBin, descriptor.args, {
+        stdio: descriptor.stdio || ['ignore', 'pipe', 'pipe'],
         detached: true,
-        // v0.32: hide console windows on Windows; without this every
-        // claude.exe + its Bash subprocesses flash a console.
         windowsHide: true,
         env: { ...process.env, AWB_API_KEY: this.#config.apiKey },
-        // Only .cmd/.bat/.ps1 wrappers need cmd.exe (shell:true). Native .exe
-        // files spawn directly, avoiding Windows arg-escaping surprises from
-        // shell-parsed quotes/ampersands in spec.taskText.
-        shell: /\.(cmd|bat|ps1)$/i.test(resolvedBin),
+        // Only .cmd/.bat/.ps1 wrappers need cmd.exe shell. Native .exe
+        // spawns directly. The adapter normally won't surface a wrapper
+        // path (cli-resolver gates Windows to .exe-only), but the user can
+        // override via config; respect that choice.
+        shell: descriptor.shell ?? /\.(cmd|bat|ps1)$/i.test(resolvedBin),
       });
-      // CRITICAL: attach the 'error' listener synchronously BEFORE any early
-      // return. spawn() emits 'error' async on ENOENT etc.; without a
-      // listener the event becomes an uncaughtException that corrupts proxy
-      // state. Attaching here (not inside #wireExitHandler, which is skipped
-      // when pid is undefined) guarantees coverage for failed spawns.
+      // Attach 'error' synchronously BEFORE any early return — spawn() emits
+      // 'error' async on ENOENT; without a listener it becomes an
+      // uncaughtException.
       child.once('error', (err) => {
-        log(`Subagent spawn error: code=${err.code || ''} bin=${resolvedBin} msg=${err.message}`);
+        log(`Subagent spawn error: code=${err.code || ''} cli=${this.#adapter.cliType} bin=${resolvedBin} msg=${err.message}`);
       });
       child.unref();
 
       const pid = child.pid;
       if (!pid) {
-        await fsp.unlink(configPath).catch(() => {});
+        if (configPath) await fsp.unlink(configPath).catch(() => {});
         this.#map.delete(reservationId);
         return { spawned: false, reason: 'spawn_failed' };
+      }
+
+      // Push the prompt over stdin if the adapter wants stdin-prompted
+      // execution (gemini one-shot). Done after spawn() returns so we have
+      // a real child handle.
+      if (typeof descriptor.writePrompt === 'function') {
+        try { descriptor.writePrompt(child); } catch (err) {
+          log(`Subagent writePrompt failed: ${err.message}`);
+        }
       }
 
       const record = {
         pid,
         kind: spec.kind,
+        cli_type: this.#adapter.cliType,
         trigger_id: spec.triggerId || null,
         chat_request_id: spec.chatRequestId || null,
         ticket_id: spec.ticketId || null,
@@ -270,9 +267,11 @@ export class SubagentManager {
         expected_completion_at: Date.now() + this.#config.delegation.ttlMinutes * 60_000,
         config_path: configPath,
         process_handle: child,
+        // For non-MCP adapters: capture stdout so collectOneshotResult can
+        // assemble a final answer at exit time.
+        captureOutput: !this.#adapter.has(NATIVE_MCP),
+        outLines: [],
       };
-      // v0.32 monitor tap (no-op when monitor unset). One-shots use 'oneshot'
-      // kind; session_key encodes the dispatch identity for the UI.
       record.tap = this.#monitor?.register({
         kind: 'oneshot',
         sessionKey: spec.triggerId
@@ -287,7 +286,7 @@ export class SubagentManager {
       this.#wireExitHandler(child, pid);
       this.#wireStdioCapture(child, pid);
 
-      log(`Subagent spawned: pid=${pid} kind=${spec.kind} ticket=${spec.ticketId || '-'}`);
+      log(`Subagent spawned: pid=${pid} cli=${this.#adapter.cliType} kind=${spec.kind} ticket=${spec.ticketId || '-'}`);
       return { spawned: true, pid };
     } catch (err) {
       this.#map.delete(reservationId);
@@ -306,12 +305,24 @@ export class SubagentManager {
       const durationSec = Math.round((Date.now() - record.started_at) / 1000);
       this.#map.delete(pid);
       this.#persist();
-      try {
-        await fsp.unlink(record.config_path);
-      } catch { /* best-effort */ }
+      if (record.config_path) {
+        try { await fsp.unlink(record.config_path); } catch { /* best-effort */ }
+      }
       record.tap?.end({ exit_code: code, signal });
-      log(`Subagent exit: pid=${pid} kind=${record.kind} code=${code} signal=${signal || '-'} duration=${durationSec}s`);
-      // Expose hook for Plan 04-03 test spy — stored on the instance for test visibility
+
+      // Non-MCP adapters: post the captured output as a ticket comment so
+      // the user sees the gemini-style CLI's answer in the AWB UI. Only
+      // when the spawn was scoped to a ticket and the run wasn't killed.
+      if (record.captureOutput && record.ticket_id && code === 0 && !signal) {
+        try {
+          const answer = this.#adapter.collectOneshotResult(record.outLines);
+          if (answer) await this.#postOneshotAnswer(record, answer);
+        } catch (err) {
+          log(`Subagent post-answer failed pid=${pid}: ${err.message}`);
+        }
+      }
+
+      log(`Subagent exit: pid=${pid} cli=${record.cli_type || '-'} kind=${record.kind} code=${code} signal=${signal || '-'} duration=${durationSec}s`);
       if (typeof this.onExit === 'function') {
         try { this.onExit({ pid, record, code, signal, durationSec }); } catch { /* ignore */ }
       }
@@ -327,6 +338,10 @@ export class SubagentManager {
       rlOut.on('line', (line) => {
         const record = this.#map.get(pid);
         record?.tap?.outLine(line);
+        if (record?.captureOutput) {
+          // Bound the buffer so a runaway CLI doesn't OOM the daemon.
+          if (record.outLines.length < 10000) record.outLines.push(line);
+        }
         log(`[subagent:${pid}] ${line}`);
       });
     }
@@ -336,22 +351,37 @@ export class SubagentManager {
     }
   }
 
+  async #postOneshotAnswer(record, answer) {
+    // Use the same MCP add_comment path persistent ticket sessions use for
+    // set/clear_current_task — fire-and-forget, log on failure. Cap content
+    // length so an unexpectedly verbose CLI doesn't blow the comment
+    // endpoint's payload limit.
+    const MAX = 60_000;
+    const trimmed = answer.length > MAX ? answer.slice(0, MAX) + '\n\n…[truncated]' : answer;
+    await fireAndForgetTool(this.#config, 'add_comment', {
+      ticket_id: record.ticket_id,
+      content: trimmed,
+      type: 'note',
+    });
+    log(`Subagent posted answer to ticket=${record.ticket_id} (cli=${record.cli_type}, ${trimmed.length} chars)`);
+  }
+
   #sweep() {
     const now = Date.now();
     for (const [pid, record] of this.#map.entries()) {
       if (record.kind === 'reservation') continue;
-      // Existence check — process may have died without our exit handler firing
       try {
         process.kill(pid, 0);
       } catch (err) {
         if (err.code === 'ESRCH' || err.code === 'EPERM') {
           log(`Sweep: pid=${pid} no longer alive, removing record`);
           this.#map.delete(pid);
-          fsp.rm(dirname(record.config_path), { recursive: true, force: true }).catch(() => {});
+          if (record.config_path) {
+            fsp.rm(dirname(record.config_path), { recursive: true, force: true }).catch(() => {});
+          }
           continue;
         }
       }
-      // TTL enforcement
       if (now >= record.expected_completion_at) {
         log(`Sweep: pid=${pid} exceeded TTL, sending SIGTERM`);
         try { process.kill(pid, 'SIGTERM'); } catch { /* already dead */ }
@@ -382,7 +412,6 @@ export class SubagentManager {
       if (!rec || !rec.pid) continue;
       try {
         process.kill(rec.pid, 0);
-        // Alive — revive record. process_handle is null because we didn't spawn it this session.
         this.#map.set(rec.pid, { ...rec, process_handle: null });
         revived++;
       } catch (err) {
@@ -396,19 +425,18 @@ export class SubagentManager {
   }
 
   #persist() {
-    // Pitfall 7: strip process_handle (circular ChildProcess refs throw on JSON.stringify)
     const pids = [];
     for (const rec of this.#map.values()) {
       if (rec.kind === 'reservation') continue;
-      const { process_handle, ...serializable } = rec;
+      // outLines can grow large for long gemini runs — strip from persist
+      // along with the (always non-serializable) process_handle.
+      const { process_handle, outLines, ...serializable } = rec;
       pids.push(serializable);
     }
-    // Fire-and-forget; log on failure
     fsp.writeFile(this.#persistPath, JSON.stringify({ pids }, null, 2))
       .catch((err) => log(`SubagentManager persist failed: ${err.message}`));
   }
 
-  /** Graceful shutdown: SIGTERM all children, give STOP_GRACE_MS, then SIGKILL survivors. */
   async stop() {
     if (this.#sweepTimer) {
       clearInterval(this.#sweepTimer);
@@ -435,12 +463,12 @@ export class SubagentManager {
     log(`SubagentManager stopped (terminated ${pids.length} children)`);
   }
 
-  /** Test-only accessor: snapshot of active records (stripped of process_handle). */
+  /** Test-only accessor: snapshot of active records. */
   _snapshot() {
     const out = [];
     for (const rec of this.#map.values()) {
       if (rec.kind === 'reservation') continue;
-      const { process_handle, ...serializable } = rec;
+      const { process_handle, outLines, ...serializable } = rec;
       out.push(serializable);
     }
     return out;
