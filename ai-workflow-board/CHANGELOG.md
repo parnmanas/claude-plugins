@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.42.0 — 2026-05-25
+
+Marketplace-cache bump for the AWB MCP tool surface added by the ticket
+auto-archive feature (ai-workflow-board ticket 9b44526b):
+
+- `list_archived_tickets` — paginated archived ticket lookup.
+- `archive_ticket` — manual archive (with activity_log audit).
+- `unarchive_ticket` — restore (resets `terminal_entered_at`).
+- `get_board` / `get_board_summary` grew an `include_archived` boolean.
+- `update_board` accepts `auto_archive_days` (null or 1..365).
+
+The proxy itself is unchanged — it's a pure pass-through forwarder, so
+the new tools land automatically once Claude Code re-fetches the AWB
+server's `tools/list`. Version bump exists only to invalidate the
+marketplace cache per CLAUDE.md's "Plugin version sync" rule.
+
 ## v0.40.0 — 2026-05-02
 
 **Breaking:** the daemon and proxy-side delegation pipeline have been removed.
