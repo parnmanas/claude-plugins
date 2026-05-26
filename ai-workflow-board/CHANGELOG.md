@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.43.0 — 2026-05-26
+
+Marketplace-cache bump for the AWB MCP tool surface added by the chat
+attachment feature (ai-workflow-board ticket 92082b55):
+
+- `add_chat_message_attachment` — upload a file into a chat room (base64).
+  Returns an `attachment_id` the caller passes to `send_chat_room_message`.
+- `delete_chat_message_attachment` — discard a pending (pre-send) upload.
+  Bound (sent) attachments live and die with their message; use room
+  deletion for those.
+- `send_chat_room_message` schema gained an optional `attachment_ids: string[]`
+  field so agent-authored chat messages can carry file attachments.
+- `chat_room_message` SSE payload and the `GET /api/chat-rooms/:room_id/messages`
+  history fetch now include an `attachments[]` projection (`id`, `filename`,
+  `mime_type`, `size_bytes`, `download_url`, `thumbnail_url?`). The history
+  endpoint stays REST-only — no `list_chat_messages` MCP tool is added.
+
+The proxy itself is unchanged — it's a pure pass-through forwarder, so the
+new tools and the extended `send_chat_room_message` schema land
+automatically once Claude Code re-fetches the AWB server's `tools/list`.
+Version bump exists only to invalidate the marketplace cache per
+CLAUDE.md's "Plugin version sync" rule.
+
 ## v0.42.0 — 2026-05-25
 
 Marketplace-cache bump for the AWB MCP tool surface added by the ticket
