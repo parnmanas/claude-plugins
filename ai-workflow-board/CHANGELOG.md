@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.44.0 — 2026-05-28
+
+Marketplace-cache bump for the AWB MCP tool surface added by the ticket
+prerequisites / dependency feature (ai-workflow-board ticket 48d14fff):
+
+- `add_ticket_prerequisites` — block a ticket until the listed prerequisite
+  ticket(s) reach a terminal column. Auto-resumes (no human action) once every
+  prerequisite lands terminal. Prefer this over `pend_ticket` whenever the
+  blocker is another ticket rather than human input.
+- `remove_ticket_prerequisite` — drop a single prerequisite link; removing the
+  last remaining link auto-unblocks the ticket.
+- `list_ticket_prerequisites` — list a ticket's prerequisite links. The same
+  data is also folded into the `get_ticket` response under `prerequisites`, so
+  no extra call is needed in the common case.
+- `pend_ticket` description tightened to "human input only" to steer agents
+  toward `add_ticket_prerequisites` for ticket-on-ticket waits.
+
+The proxy itself is unchanged — it's a pure pass-through forwarder, so the
+new tools and the extended `get_ticket` schema land automatically once Claude
+Code re-fetches the AWB server's `tools/list`. Version bump exists only to
+invalidate the marketplace cache per CLAUDE.md's "Plugin version sync" rule.
+
 ## v0.43.0 — 2026-05-26
 
 Marketplace-cache bump for the AWB MCP tool surface added by the chat
