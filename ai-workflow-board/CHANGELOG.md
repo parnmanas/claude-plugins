@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.51.0 — 2026-06-18
+
+Marketplace-cache bump for the AWB MCP tool surface change added by the board
+output-language (i18n) feature (ai-workflow-board ticket ae28dcaf):
+
+- `update_board` — gains an optional `language` input (a human-readable
+  language name, e.g. "Korean"). Agents dispatched on the board write their
+  comments / chat / commit messages / code comments in that language; the
+  server folds it into the dispatch system prompt. Empty string / null clears
+  the override (agents fall back to their default, English).
+
+The proxy itself is unchanged — it's a pure pass-through forwarder, so the
+extended `update_board` schema lands automatically once Claude Code re-fetches
+the AWB server's `tools/list`. Version bump exists only to invalidate the
+marketplace cache per CLAUDE.md's "Plugin version sync" rule.
+
 ## v0.44.0 — 2026-05-28
 
 Marketplace-cache bump for the AWB MCP tool surface added by the ticket
