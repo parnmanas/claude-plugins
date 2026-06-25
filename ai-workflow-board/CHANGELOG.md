@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.59.0 — 2026-06-25
+
+Marketplace-cache bump for the AWB MCP tool surface added by the security
+scheduler / manual full-inspection feature (ai-workflow-board ticket 7c07c19d):
+
+- `start_security_batch` / `get_security_batch` — run several security profiles
+  SEQUENTIALLY ("수동 전체 점검"): profile N+1 only dispatches after profile N
+  reaches a terminal status, never all at once. Pass an ordered `profile_ids`
+  list or `all: true` to expand to every enabled profile in scope at dispatch
+  time. `stop_on_fail` halts on the first non-passed run.
+- `list_security_schedules` / `get_security_schedule` /
+  `create_security_schedule` / `update_security_schedule` /
+  `delete_security_schedule` / `run_security_schedule_now` — an automatic
+  trigger layer that kicks the sequential batch when due. `scope` is `all`
+  (resolve enabled profiles at dispatch time) or `selected` (explicit
+  `profile_ids`); cadence is exactly one of `cron` (5 UTC fields) or
+  `interval_ms`. `run_security_schedule_now` fires immediately without
+  disturbing the automatic cadence.
+
+The proxy itself is unchanged — it's a pure pass-through forwarder, so the new
+tools land automatically once Claude Code re-fetches the AWB server's
+`tools/list`. Version bump exists only to invalidate the marketplace cache per
+CLAUDE.md's "Plugin version sync" rule.
+
 ## v0.51.0 — 2026-06-18
 
 Marketplace-cache bump for the AWB MCP tool surface change added by the board
