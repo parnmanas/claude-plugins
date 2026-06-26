@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.63.0 — 2026-06-26
+
+Marketplace-cache bump for the AWB MCP tool surface added by the board-delete
+exposure feature (ai-workflow-board ticket 2d6780a5):
+
+- `delete_board` — delete a board and all its columns, tickets (with subtasks)
+  and comments. The delete cascades through the column → ticket →
+  child-ticket / comment FK chain (same behaviour as `DELETE /api/boards/:id`).
+  Unlike `delete_workspace` there is no "cannot delete the last board" guard —
+  a workspace may hold zero boards. Irreversible; no archive/restore here.
+
+The proxy is a pure forwarder, so no `proxy.mjs` change is required — this bump
+only invalidates the marketplace cache so clients pick up the new tool.
+
 ## v0.59.0 — 2026-06-25
 
 Marketplace-cache bump for the AWB MCP tool surface added by the security
