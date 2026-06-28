@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.66.0 — 2026-06-28
+
+Marketplace-cache bump for the AWB MCP tool surface added by the QA/security
+workspace-folder option feature (ai-workflow-board ticket cc0784b6, chain 2/5):
+
+- `create_qa_scenario` / `update_qa_scenario` and
+  `create_security_profile` / `update_security_profile` now accept four optional
+  working-folder knobs so a scenario/profile can pin where + how it runs instead
+  of letting each run pick an arbitrary folder (the GameClient QA re-clone
+  problem):
+  - `workspace_folder` — agent-home-relative working folder. Omit/"" → the
+    deterministic default `qa/<scenario_id>` / `security/<profile_id>`.
+  - `repo_ref` — `{ resource_id?, url?, branch? }` or `null`. null inherits the
+    board/workspace `environment_config` repo.
+  - `checkout_mode` — `reuse` | `fresh` (default `reuse`; `fresh` wipes + re-checks-out → cold build).
+  - `build_mode` — `cold_then_warm` | `always_cold` | `always_warm`
+    (default `cold_then_warm`).
+- The matching `get_*` / `list_*` tools project the same four fields back.
+
+The proxy is a pure auto-discovery forwarder, so no `proxy.mjs` change is
+required — `tools/list` / `tools/call` pass the new schema through. This bump
+only invalidates the marketplace cache so clients pick up the new input fields.
+
 ## v0.63.0 — 2026-06-26
 
 Marketplace-cache bump for the AWB MCP tool surface added by the board-delete
