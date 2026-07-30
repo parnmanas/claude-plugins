@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.72.0 — 2026-07-30
+
+Marketplace-cache bump for the AWB MCP Claude backend profile registry tools
+added by ai-workflow-board ticket 8da464be-c5bd-4461-a80e-d45b0986e9b3:
+
+- `upsert_claude_backend_profile` — idempotently create or reuse a profile,
+  refusing same-name endpoint/model/protocol collisions.
+- `assign_workspace_backend_profile` — preserve existing workspace assignments
+  while idempotently adding and optionally selecting a profile.
+- `list_claude_backend_profiles` — return secret-safe registry metadata and
+  optional workspace assignment verification.
+
+The proxy is a pure auto-discovery forwarder, so no `proxy.mjs` change is
+required. `tools/list` and `tools/call` pass the new server surface through;
+this version bump invalidates the marketplace cache.
+
 ## v0.66.0 — 2026-06-28
 
 Marketplace-cache bump for the AWB MCP tool surface added by the QA/security
